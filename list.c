@@ -35,7 +35,7 @@ List list_insert(List l, String key, String val) {
     return new_node;
 }
 
-List list_delete(List l,char *key) {
+List list_delete(List l,const char *key) {
     List temp,head=l,prev=NULL;
     while(l!=NULL) {
         temp = l->next;
@@ -57,7 +57,7 @@ List list_delete(List l,char *key) {
     return head;
 }
 
-struct sync_info_rec *list_search(List l,char *key) {
+struct sync_info_rec *list_search(List l,const char *key) {
     while(l!=NULL) {
         if(!strcmp(string_ptr(l->rec.source_dir),key))
             return (struct sync_info_rec*) &l->rec;

@@ -4,6 +4,7 @@
 
 int main(int argc,char **argv) {
     int worker_limit = 5;
+    int cur_workers = 0;
     char opt = '\0';
     char *logfile = NULL;
     char *config = NULL;
@@ -29,6 +30,9 @@ int main(int argc,char **argv) {
                     break;
                 case '\0':
                     perror("Argument without option\n");
+                    return ARGS_ERR;
+                default:
+                    fprintf(stderr,"-%c is not an option\n",opt);
                     return ARGS_ERR;
             }
             opt = 0;
