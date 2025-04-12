@@ -24,14 +24,19 @@ void list_free(List l) {
     }
 }
 
-List list_insert(List l, String key, String val) {
+List list_insert(List l, String key, String val,int *succ) {
     List new_node = malloc(sizeof(struct list_node));
+    if (new_node==NULL) {
+        *succ = 0;
+        return l;
+    }
     new_node->rec.source_dir = key;
     new_node->rec.target_dir = val;
     new_node->rec.status = ACTIVE;
     new_node->rec.last_sync_time = 0;
     new_node->rec.error_count = 0;
     new_node->next=l;
+    *succ = 1;
     return new_node;
 }
 

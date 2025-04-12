@@ -1,5 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/inotify.h>
+#include "hashtable.h"
+#include "string.h"
 #include "utils.h"
 
 int main(int argc,char **argv) {
@@ -27,6 +30,10 @@ int main(int argc,char **argv) {
                         perror("Worker limit must be int\n");   // Maybe change error text to usage
                         return ARGS_ERR;
                     }
+                    if (worker_limit < 1) {
+                        perror("Worker limit must be a positive integer\n");
+                        return ARGS_ERR;
+                    }
                     break;
                 case '\0':
                     perror("Argument without option\n");
@@ -41,6 +48,11 @@ int main(int argc,char **argv) {
     if (opt != '\0') {
         perror("Option without argument\n");
         return ARGS_ERR;
+    }
+    int inotify_fd;
+    if ((inotify_fd = inotify_init()) == -1) {
+        perror("Inotify initialization error\n");
+        return INOTIFY_ERR;
     }
     if (config != NULL) {
         return 0;    

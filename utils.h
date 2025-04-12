@@ -2,6 +2,7 @@
 
 enum return_codes {
     ARGS_ERR=1,
+    INOTIFY_ERR,
 };
 
 enum status_codes {
