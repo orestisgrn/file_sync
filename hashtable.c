@@ -32,6 +32,7 @@ int hash_string(Hashtable h,const char *key) {      // Maybe change hash func to
     return sum % h->size;
 }
 
+/* -1: duplicate entry | 0: unsuccessful insert | 1: success */
 int hashtable_insert(Hashtable h,String key,String val) {
     List *bucket = &h->arr[hash_string(h,string_ptr(key))];
     if (list_search(*bucket,string_ptr(key))==NULL) {
@@ -40,7 +41,7 @@ int hashtable_insert(Hashtable h,String key,String val) {
         return succ;
     }
     else {
-        return 0;
+        return -1;
     }
 }
 
@@ -55,8 +56,10 @@ void hashtable_delete(Hashtable h,const char *key) {
 }
 
 void hashtable_free(Hashtable h) {
-    for (int i=0;i<h->size;i++)
-        list_free(h->arr[i]);
-    free(h->arr);
-    free(h);
+    if (h!=NULL) {
+        for (int i=0;i<h->size;i++)
+            list_free(h->arr[i]);
+        free(h->arr);
+        free(h);
+    }
 }
