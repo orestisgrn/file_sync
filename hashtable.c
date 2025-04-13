@@ -25,9 +25,9 @@ Hashtable hashtable_create(int size) {
     return h;
 }
 
-int hash_string(Hashtable h,const char *key) {      // Maybe change hash func to a better one
-    int sum=0;                                      // http://www.cse.yorku.ca/~oz/hash.html
-    while (*key != '\0')                            // Also maybe add rehashing
+unsigned hash_string(Hashtable h,const char *key) {     // Maybe change hash func to a better one
+    unsigned sum=0;                                     // http://www.cse.yorku.ca/~oz/hash.html
+    while (*key != '\0')                                // Also maybe add rehashing
         sum += *(key++);
     return sum % h->size;
 }
