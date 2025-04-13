@@ -21,6 +21,7 @@ int main(int argc,char **argv) {
             opt = (*argv)[1];
         }
         else {
+            char *wrong_char;
             switch (opt) {
                 case 'l':
                     logfile = *argv;
@@ -29,7 +30,7 @@ int main(int argc,char **argv) {
                     config = *argv;
                     break;
                 case 'n':
-                    char *wrong_char=NULL;
+                    wrong_char=NULL;
                     worker_limit = strtol(*argv,&wrong_char,10);
                     if (*wrong_char!='\0') {
                         perror("Worker limit must be int\n");   // Maybe change error text to usage
