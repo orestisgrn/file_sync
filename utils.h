@@ -5,10 +5,12 @@ enum return_codes {
     INOTIFY_ERR,
     FOPEN_ERR,
     ALLOC_ERR,
+    PATH_RES_ERR,
+    NONEXISTENT_PATH,
 };
 
 enum status_codes {
-    ACTIVE
+    ACTIVE,
 };
 
 struct sync_info_rec {

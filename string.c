@@ -31,7 +31,7 @@ void string_free(String s) {
     }
 }
 
-int string_push(String s,char data) {
+int string_push(String s,char data) {   // Maybe don't set s->arr as realloc immediately (to keep old array)
     if (s->length==s->capacity) {
         s->capacity*=2;
         s->arr=realloc(s->arr,sizeof(char)*(s->capacity+1));
@@ -43,6 +43,14 @@ int string_push(String s,char data) {
     s->arr[s->length++]=data;
     s->arr[s->length]='\0';
 
+    return 0;
+}
+
+int string_cpy(String s,char *src) {
+    while(*src!='\0') {
+        if (string_push(s,*(src++))==-1)
+            return -1;
+    }
     return 0;
 }
 

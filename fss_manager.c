@@ -2,11 +2,14 @@
 #include <stdlib.h>
 #include <sys/inotify.h>
 #include <ctype.h>
+#include <limits.h>
+#include <errno.h>
 #include "hashtable.h"
 #include "string.h"
 #include "utils.h"
 
 int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd);
+int handle_realpath_error(char *res_path);
 
 int main(int argc,char **argv) {
     int worker_limit = 5;
@@ -103,7 +106,6 @@ int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd
                 return 0;
             }
         }
-        printf("%s\n",string_ptr(source));//
         ch = skip_white(config_file);
         if (ch==EOF) {
             string_free(source);
@@ -124,11 +126,33 @@ int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd
                 break;
             }
         }
+        char *real_source=realpath(string_ptr(source),NULL);
+        int handle_err = handle_realpath_error(real_source);
+        if (handle_err==NONEXISTENT_PATH) {
+            printf("\nPath %s doesn't exist. Omitted.\n\n",string_ptr(source));//
+            string_free(source);
+            string_free(target);
+            continue;
+        }
+        else if (handle_err==PATH_RES_ERR) {
+            string_free(source);
+            string_free(target);
+            return PATH_RES_ERR;
+        }
+        string_free(source);
+        if ((source=string_create(10))==NULL)   // Maybe put length to create arg
+            return ALLOC_ERR;
+        if (string_cpy(source,real_source)==-1)
+            return ALLOC_ERR;
+        free(real_source);
+        printf("%s\n",string_ptr(source));//
         printf("%s\n",string_ptr(target));//
+        //int watch_desc;
+        //if ((watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),)))
         int insert_code = hashtable_insert(sync_info_mem_store,source,target);
         printf("%d\n",insert_code);
         if (insert_code==-1) {
-            printf("\nEntry %s detected twice. Duplicate entry omitted.\n",string_ptr(source));
+            printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
             string_free(source);
             string_free(target);
         }
@@ -138,5 +162,19 @@ int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd
             return ALLOC_ERR;
         }
     } while (ch!=EOF);
+    return 0;
+}
+
+int handle_realpath_error(char *res_path) {
+    int err = errno;
+    if (res_path==NULL) {
+        if (err!=EACCES && err!=ENOENT && err!=ENOTDIR) {
+            fprintf(stderr,"Path resolution error: errno = %d\n",err);
+            return PATH_RES_ERR;
+        }
+        else {
+            return NONEXISTENT_PATH;
+        }
+    }
     return 0;
 }
