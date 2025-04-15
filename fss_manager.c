@@ -11,7 +11,6 @@
 #include "utils.h"
 
 int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
-int handle_realpath_error(char *res_path);
 
 int main(int argc,char **argv) {
     int worker_limit = 5;
@@ -132,19 +131,15 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
                 break;
             }
         }
-        char *real_source=realpath(string_ptr(source),NULL);
-        int handle_err = handle_realpath_error(real_source);
-        if (handle_err==NONEXISTENT_PATH) {
-            printf("\nSource path %s doesn't exist. Omitted.\n\n",string_ptr(source));//
+        DIR *source_dir;
+        if ((source_dir=opendir(string_ptr(source)))==NULL) {
+            printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(source));
             string_free(source);
             string_free(target);
             continue;
         }
-        else if (handle_err==PATH_RES_ERR) {
-            string_free(source);
-            string_free(target);
-            return PATH_RES_ERR;
-        }
+        closedir(source_dir);
+        char *real_source=realpath(string_ptr(source),NULL);
         string_free(source);
         if ((source=string_create(10))==NULL)   // Maybe put length to create arg
             return ALLOC_ERR;
@@ -177,19 +172,5 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             return ALLOC_ERR;
         }
     } while (ch!=EOF);
-    return 0;
-}
-
-int handle_realpath_error(char *res_path) {
-    int err = errno;
-    if (res_path==NULL) {
-        if (err!=EACCES && err!=ENOENT && err!=ENOTDIR) {
-            fprintf(stderr,"Path resolution error: errno = %d\n",err);
-            return PATH_RES_ERR;
-        }
-        else {
-            return NONEXISTENT_PATH;
-        }
-    }
     return 0;
 }
