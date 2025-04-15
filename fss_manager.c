@@ -4,11 +4,13 @@
 #include <ctype.h>
 #include <limits.h>
 #include <errno.h>
-#include "hashtable.h"
+#include <sys/types.h>
+#include <dirent.h>
+#include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
 
-int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd);
+int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
 int handle_realpath_error(char *res_path);
 
 int main(int argc,char **argv) {
@@ -18,7 +20,7 @@ int main(int argc,char **argv) {
     char *logfile = NULL;
     char *config = NULL;
     FILE *config_file=NULL;
-    Hashtable sync_info_mem_store=NULL;
+    Sync_Info_Lookup sync_info_mem_store=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -63,11 +65,11 @@ int main(int argc,char **argv) {
         perror("Inotify initialization error\n");
         return INOTIFY_ERR;
     }
-    sync_info_mem_store = hashtable_create(200);
+    sync_info_mem_store = sync_info_lookup_create(200);
     if (config != NULL) {
         if ((config_file=fopen(config,"r"))==NULL) {
             perror("Config file couldn't open\n");
-            hashtable_free(sync_info_mem_store);
+            sync_info_lookup_free(sync_info_mem_store);
             return FOPEN_ERR;
         }
         int code;
@@ -75,6 +77,10 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
+    struct sync_info_rec *rec=sync_info_path_search(sync_info_mem_store,"/home/orestisgr123/Έγγραφα/excel_courses");
+    printf("\n%d\n",rec->watch_desc);
+    rec = sync_info_watchdesc_search(sync_info_mem_store,rec->watch_desc);
+    printf("\n%s\n",string_ptr(rec->source_dir));
     CLEAN_AND_EXIT( ,0);
     return 0;
 }
@@ -85,7 +91,7 @@ int skip_white(FILE *file) {
     return ch;
 }
 
-int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd) {
+int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd) {
     int ch;
     String source,target;
     do {
@@ -129,7 +135,7 @@ int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd
         char *real_source=realpath(string_ptr(source),NULL);
         int handle_err = handle_realpath_error(real_source);
         if (handle_err==NONEXISTENT_PATH) {
-            printf("\nPath %s doesn't exist. Omitted.\n\n",string_ptr(source));//
+            printf("\nSource path %s doesn't exist. Omitted.\n\n",string_ptr(source));//
             string_free(source);
             string_free(target);
             continue;
@@ -147,16 +153,25 @@ int read_config(FILE *config_file, Hashtable sync_info_mem_store, int inotify_fd
         free(real_source);
         printf("%s\n",string_ptr(source));//
         printf("%s\n",string_ptr(target));//
-        //int watch_desc;
-        //if ((watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),)))
-        int insert_code = hashtable_insert(sync_info_mem_store,source,target);
-        printf("%d\n",insert_code);
-        if (insert_code==-1) {
+        DIR *target_dir;
+        if ((target_dir=opendir(string_ptr(target)))==NULL) {
+            printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(target));
+            string_free(source);
+            string_free(target);
+            continue;
+        }
+        closedir(target_dir);
+        int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
+        int insert_code = sync_info_insert(sync_info_mem_store,source,target,watch_desc);
+        printf("%d %d\n",insert_code,watch_desc);
+        if (insert_code==DUPL) {
             printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
+            inotify_rm_watch(inotify_fd,watch_desc);
             string_free(source);
             string_free(target);
         }
-        else if (insert_code==0) {
+        else if (insert_code==FAILED) {
+            inotify_rm_watch(inotify_fd,watch_desc);
             string_free(source);
             string_free(target);
             return ALLOC_ERR;

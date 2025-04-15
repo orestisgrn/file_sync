@@ -19,10 +19,11 @@ struct sync_info_rec {
     int status;
     int last_sync_time;
     int error_count;
+    int watch_desc;
 };
 
 #define CLEAN_AND_EXIT(PRINT_CMD,RETURN_CODE) { \
-    hashtable_free(sync_info_mem_store); \
+    sync_info_lookup_free(sync_info_mem_store); \
     if (config_file != NULL) fclose(config_file); \
     PRINT_CMD; \
     return RETURN_CODE; \
