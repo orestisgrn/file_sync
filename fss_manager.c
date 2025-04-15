@@ -9,12 +9,15 @@
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
+#include "worker.h"
+#include "queue.h"
+
+int cur_workers = 0;
+int worker_limit = 5;
 
 int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
 
 int main(int argc,char **argv) {
-    int worker_limit = 5;
-    int cur_workers = 0;
     char opt = '\0';
     char *logfile = NULL;
     char *config = NULL;
@@ -157,7 +160,8 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
         }
         closedir(target_dir);
         int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
-        int insert_code = sync_info_insert(sync_info_mem_store,source,target,watch_desc);
+        int insert_code;
+        struct sync_info_rec *rec = sync_info_insert(sync_info_mem_store,source,target,watch_desc,&insert_code);
         printf("%d %d\n",insert_code,watch_desc);
         if (insert_code==DUPL) {
             printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
@@ -170,6 +174,12 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             string_free(source);
             string_free(target);
             return ALLOC_ERR;
+        }
+        if (cur_workers==worker_limit) {
+            continue;
+        }
+        else {
+            continue;
         }
     } while (ch!=EOF);
     return 0;

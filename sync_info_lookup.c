@@ -25,22 +25,24 @@ Sync_Info_Lookup sync_info_lookup_create(int size) {
     return ltable;
 }
 
-int sync_info_insert(Sync_Info_Lookup ltable,String key,String val,int watch_desc) {
+struct sync_info_rec*
+sync_info_insert(Sync_Info_Lookup ltable,String key,String val,int watch_desc,int *insert_code) {
     int succ;
     struct sync_info_rec *rec=hashtable_path_insert(ltable->path_lookup,key,val,watch_desc,&succ);
     if (rec==NULL) {
         if (succ)
-            return DUPL;
+            *insert_code = DUPL;
         else
-            return FAILED;
+            *insert_code = FAILED;
     }
     else {
         rec = hashtable_watchdesc_insert(ltable->wd_lookup,rec,&succ);
         if (rec==NULL)
-            return FAILED;
+            *insert_code = FAILED;
         else
-            return SUCCESS;
+            *insert_code = SUCCESS;
     }
+    return rec;
 }
 
 struct sync_info_rec *sync_info_path_search(Sync_Info_Lookup ltable,const char *key) {
