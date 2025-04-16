@@ -13,6 +13,8 @@
 #include "worker.h"
 #include "queue.h"
 
+#include <string.h>
+
 int cur_workers = 0;
 int worker_limit = 5;
 
@@ -200,17 +202,17 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
                 return FORK_ERR;
             }
             else if (pid==0) {
-                close(rec->pipes[0]);//
+                close(rec->pipes[0]);
                 dup2(rec->pipes[1],STDOUT_FILENO);
                 char op[2] = { FULL+'0','\0' };
                 execl("./worker","worker",string_ptr(source),string_ptr(target),"ALL",op,NULL);
                 perror("Worker binary couldn't be executed\n");
                 return EXEC_ERR;
             }
-            close(rec->pipes[1]);//
+            close(rec->pipes[1]);
             char out[100];//
-            read(rec->pipes[0],out,31);//
-            printf("I read this: %s\n",out);//
+            ssize_t bytes = read(rec->pipes[0],out,100);//
+            printf("I read this: %s %d\n",out,bytes);//
         }
     } while (ch!=EOF);
     return 0;
