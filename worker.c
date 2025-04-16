@@ -11,6 +11,7 @@ int add_file(char *source,char *target,char *file);
 int modify_file(char *source,char *target,char *file);
 int deleted_file(char *source,char *target,char *file);
 
+String build_path(char *source,char *target);
 int write_report(char *err);
 
 int main(int argc,char **argv) {
@@ -35,8 +36,11 @@ int full_sync(char *source,char *target) {
     }
     struct dirent *direntp;
     while ((direntp=readdir(dir_ptr))!=NULL) {
-        //String file_path = build_path(source,direntp->d_name)
-        write(STDOUT_FILENO,direntp->d_name,strlen(direntp->d_name)+1);
+        String file_path = build_path(source,direntp->d_name);
+        if (file_path==NULL)
+            return write_report(strerror(errno));
+        write(STDOUT_FILENO,string_ptr(file_path),string_length(file_path)+1);
+        string_free(file_path);
     }
     closedir(dir_ptr);
     return 0;
@@ -57,4 +61,23 @@ int deleted_file(char *source,char *target,char *file) {
 int write_report(char *err) {
     write(STDOUT_FILENO,err,strlen(err)+1);//
     return -1;
+}
+
+String build_path(char *source,char *target) {
+    String path = string_create(10);
+    if (path==NULL)
+        return NULL;
+    if (string_cpy(path,source)==-1) {
+        string_free(path);
+        return NULL;
+    }
+    if (string_push(path,'/')==-1) {
+        string_free(path);
+        return NULL;
+    }
+    if (string_cpy(path,target)==-1) {
+        string_free(path);
+        return NULL;
+    }
+    return path;
 }
