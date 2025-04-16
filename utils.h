@@ -7,6 +7,9 @@ enum return_codes {
     ALLOC_ERR,
     PATH_RES_ERR,
     NONEXISTENT_PATH,
+    FORK_ERR,
+    PIPE_ERR,
+    EXEC_ERR,
 };
 
 enum status_codes {
@@ -20,10 +23,12 @@ struct sync_info_rec {
     int last_sync_time;
     int error_count;
     int watch_desc;
+    int pipes[2];
 };
 
 #define CLEAN_AND_EXIT(PRINT_CMD,RETURN_CODE) { \
     sync_info_lookup_free(sync_info_mem_store); \
+    free(worker_queue); \
     if (config_file != NULL) fclose(config_file); \
     PRINT_CMD; \
     return RETURN_CODE; \

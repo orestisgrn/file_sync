@@ -1,5 +1,3 @@
-#define ALL NULL
-
 enum operations {
     FULL,
     ADDED,

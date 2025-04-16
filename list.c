@@ -43,7 +43,7 @@ List list_insert_newrec(List l, String key, String val,int watch_desc,int *succ)
     new_node->rec->status = ACTIVE;
     new_node->rec->last_sync_time = 0;
     new_node->rec->error_count = 0;
-    new_node->rec->watch_desc = watch_desc;
+    new_node->rec->watch_desc = watch_desc;     // See how to handle pipe field
     new_node->next=l;
     *succ = 1;
     return new_node;

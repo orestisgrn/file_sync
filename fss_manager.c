@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <dirent.h>
+#include <unistd.h>
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
@@ -23,6 +24,7 @@ int main(int argc,char **argv) {
     char *config = NULL;
     FILE *config_file=NULL;
     Sync_Info_Lookup sync_info_mem_store=NULL;
+    Queue worker_queue=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -68,11 +70,17 @@ int main(int argc,char **argv) {
         return INOTIFY_ERR;
     }
     sync_info_mem_store = sync_info_lookup_create(200);
+    if (sync_info_mem_store==NULL) {
+        perror("Memory allocation error\n");
+        return ALLOC_ERR;
+    }
+    worker_queue = queue_create();
+    if (worker_queue==NULL) {
+        CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+    }
     if (config != NULL) {
         if ((config_file=fopen(config,"r"))==NULL) {
-            perror("Config file couldn't open\n");
-            sync_info_lookup_free(sync_info_mem_store);
-            return FOPEN_ERR;
+            CLEAN_AND_EXIT(perror("Config file couldn't open\n"),FOPEN_ERR);
         }
         int code;
         if ((code=read_config(config_file,sync_info_mem_store,inotify_fd))!=0) {
@@ -83,6 +91,7 @@ int main(int argc,char **argv) {
     printf("\n%d\n",rec->watch_desc);
     rec = sync_info_watchdesc_search(sync_info_mem_store,rec->watch_desc);
     printf("\n%s\n",string_ptr(rec->source_dir));
+    printf("%d\n",cur_workers);
     CLEAN_AND_EXIT( ,0);
     return 0;
 }
@@ -168,6 +177,7 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             inotify_rm_watch(inotify_fd,watch_desc);
             string_free(source);
             string_free(target);
+            continue;
         }
         else if (insert_code==FAILED) {
             inotify_rm_watch(inotify_fd,watch_desc);
@@ -179,7 +189,28 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             continue;
         }
         else {
-            continue;
+            cur_workers++;
+            if (pipe(rec->pipes)==-1) {
+                perror("Pipe couldn't be created\n");
+                return PIPE_ERR;
+            }
+            pid_t pid;
+            if ((pid=fork())==-1) {
+                perror("Worker process couldn't be spawned\n");
+                return FORK_ERR;
+            }
+            else if (pid==0) {
+                close(rec->pipes[0]);//
+                dup2(rec->pipes[1],STDOUT_FILENO);
+                char op[2] = { FULL+'0','\0' };
+                execl("./worker","worker",string_ptr(source),string_ptr(target),"ALL",op,NULL);
+                perror("Worker binary couldn't be executed\n");
+                return EXEC_ERR;
+            }
+            close(rec->pipes[1]);//
+            char out[100];//
+            read(rec->pipes[0],out,31);//
+            printf("I read this: %s\n",out);//
         }
     } while (ch!=EOF);
     return 0;
