@@ -7,20 +7,25 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <unistd.h>
+#include <signal.h>
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
 #include "worker.h"
 #include "queue.h"
 
-#include <string.h>
-
 int cur_workers = 0;
 int worker_limit = 5;
 
 int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
+void collect_worker(int signo);
 
 int main(int argc,char **argv) {
+    sigset_t mask;
+    sigemptyset(&mask);
+    static struct sigaction act;
+    act.sa_handler = collect_worker;
+    sigaction(SIGCHLD,&act,NULL);
     char opt = '\0';
     char *logfile = NULL;
     char *config = NULL;
@@ -89,10 +94,6 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
-    struct sync_info_rec *rec=sync_info_path_search(sync_info_mem_store,"/home/orestisgr123/Έγγραφα/excel_courses");
-    printf("\n%d\n",rec->watch_desc);
-    rec = sync_info_watchdesc_search(sync_info_mem_store,rec->watch_desc);
-    printf("\n%s\n",string_ptr(rec->source_dir));
     printf("%d\n",cur_workers);
     CLEAN_AND_EXIT( ,0);
     return 0;
@@ -210,10 +211,24 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
                 return EXEC_ERR;
             }
             close(rec->pipes[1]);
-            char out[100];//
-            ssize_t bytes = read(rec->pipes[0],out,100);//
-            printf("I read this: %s %d\n",out,bytes);//
+            String dir_file = string_create(10);//
+            char c;//
+            while (read(rec->pipes[0],&c,1)!=0) {//
+                if (c=='\0') {
+                    printf("%s\n",string_ptr(dir_file));
+                    string_free(dir_file);
+                    dir_file = string_create(10);
+                }
+                else
+                    string_push(dir_file,c);
+            }
+            string_free(dir_file);//
         }
     } while (ch!=EOF);
     return 0;
+}
+
+void collect_worker(int signo) {
+    //char text[] = "I got the child\n";
+    //write(STDOUT_FILENO,text,sizeof(text));
 }

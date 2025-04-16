@@ -1,6 +1,6 @@
 MANAGER_OBJS = fss_manager.o sync_info_lookup.o hashtable_path.o hashtable_watchdesc.o list.o string.o queue.o
 MANAGER_OUT = fss_manager
-WORKER_OBJS = worker.o
+WORKER_OBJS = worker.o string.o
 WORKER_OUT = worker
 SOURCE	= fss_manager.c sync_info_lookup.c hashtable_path.c hashtable_watchdesc.c string.c list.c queue.c worker.c
 HEADER  = utils.h sync_info_lookup.h hashtable_path.h hashtable_watchdesc.h string.h list.h worker.h queue.h
@@ -19,7 +19,7 @@ $(WORKER_OUT): $(WORKER_OBJS)
 fss_manager.o: fss_manager.c sync_info_lookup.h utils.h string.h worker.h queue.h
 	$(CC) $(FLAGS) fss_manager.c
 
-worker.o: worker.c
+worker.o: worker.c worker.h string.h
 	$(CC) $(FLAGS) worker.c
 
 list.o: list.c list.h string.h utils.h
