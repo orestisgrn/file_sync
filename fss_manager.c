@@ -8,6 +8,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <signal.h>
+#include <sys/wait.h>
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
@@ -94,7 +95,8 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
-    printf("%d\n",cur_workers);
+    int status;
+    while (wait(&status)!=-1);
     CLEAN_AND_EXIT( ,0);
     return 0;
 }
@@ -211,18 +213,6 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
                 return EXEC_ERR;
             }
             close(rec->pipes[1]);
-            String dir_file = string_create(10);//
-            char c;//
-            while (read(rec->pipes[0],&c,1)!=0) {//
-                if (c=='\0') {
-                    printf("%s\n",string_ptr(dir_file));
-                    string_free(dir_file);
-                    dir_file = string_create(10);
-                }
-                else
-                    string_push(dir_file,c);
-            }
-            string_free(dir_file);//
         }
     } while (ch!=EOF);
     return 0;

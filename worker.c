@@ -3,8 +3,12 @@
 #include <sys/types.h>
 #include <dirent.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <fcntl.h>
 #include "worker.h"
 #include "string.h"
+
+#define BUFFSIZE 100
 
 int full_sync(char *source,char *target);
 int add_file(char *source,char *target,char *file);
@@ -13,6 +17,8 @@ int deleted_file(char *source,char *target,char *file);
 
 String build_path(char *source,char *target);
 int write_report(char *err);
+
+int copy_file(String input, String output);
 
 int main(int argc,char **argv) {
     if (!strcmp(argv[3],"ALL")) {
@@ -39,7 +45,11 @@ int full_sync(char *source,char *target) {
         String file_path = build_path(source,direntp->d_name);
         if (file_path==NULL)
             return write_report(strerror(errno));
-        write(STDOUT_FILENO,string_ptr(file_path),string_length(file_path)+1);
+        String new_file_path = build_path(target,direntp->d_name);
+        if (file_path==NULL)
+            return write_report(strerror(errno));
+        int cp_code=copy_file(file_path,new_file_path);
+        string_free(new_file_path);
         string_free(file_path);
     }
     closedir(dir_ptr);
@@ -60,7 +70,7 @@ int deleted_file(char *source,char *target,char *file) {
 
 int write_report(char *err) {
     write(STDOUT_FILENO,err,strlen(err)+1);//
-    return -1;
+    return 0;
 }
 
 String build_path(char *source,char *target) {
@@ -80,4 +90,36 @@ String build_path(char *source,char *target) {
         return NULL;
     }
     return path;
+}
+
+int copy_file(String input, String output) {        // Edge case: files with the name in target dir
+    int infile,outfile;                             // already exist, but have no writing rights.
+    int error;
+    ssize_t nread ;
+    char buffer[BUFFSIZE];
+    if ((infile=open(string_ptr(input),O_RDONLY))==-1) {
+        return errno;
+    }
+    if ((outfile=open(string_ptr(output),O_WRONLY | O_CREAT | O_TRUNC,0644))==-1) {
+        error = errno;
+        close(infile);
+        return error;
+    }
+    while ((nread=read(infile,buffer,BUFFSIZE))>0) {
+        if (write(outfile,buffer,nread)<nread) {
+            error = errno;
+            close(infile);
+            close(outfile);
+            return error;
+        }
+    }
+    if (nread == -1) {
+        error = errno;
+        close(infile);
+        close(outfile);
+        return error;
+    }
+    close(infile);
+    close(outfile);
+    return 0;
 }
