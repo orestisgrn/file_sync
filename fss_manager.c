@@ -9,24 +9,29 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#include <sys/signalfd.h>
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
 #include "worker.h"
 #include "queue.h"
 
-volatile sig_atomic_t cur_workers = 0;
+int signal_fd;
+int cur_workers = 0;
 int worker_limit = 5;
 sigset_t sigchld;
 
 int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
-void collect_worker(int signo);
+void collect_workers(void);
+void cleanup_workers(void);
 
 int main(int argc,char **argv) {
     sigemptyset(&sigchld);
-    static struct sigaction act;
-    act.sa_handler = collect_worker;
-    sigaction(SIGCHLD,&act,NULL);
+    sigaddset(&sigchld,SIGCHLD); 
+    if ((signal_fd=signalfd(-1,&sigchld,SFD_NONBLOCK))==-1) {
+        perror("Signal file descriptor initialization error\n");
+        return SIGNALFD_ERR;
+    }
     char opt = '\0';
     char *logfile = NULL;
     char *config = NULL;
@@ -95,8 +100,7 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
-    int status;//
-    while (wait(&status)!=-1);//
+    cleanup_workers();
     printf("%d\n",cur_workers);//
     CLEAN_AND_EXIT( ,0);
 }
@@ -190,7 +194,7 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             string_free(target);
             return ALLOC_ERR;
         }
-        // sigprocmask for cur_workers here
+        collect_workers();
         if (cur_workers==worker_limit) {        // Maybe make that a function (spawn_worker)
             continue;
         }
@@ -219,12 +223,21 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
     return 0;
 }
 
-void collect_worker(int signo) {
-    cur_workers--;
+void collect_workers(void) {
+    static struct signalfd_siginfo siginfo;
+    printf("Here to collect workers\n");
+    while (read(signal_fd,&siginfo,sizeof(siginfo))!=-1) {
+        int status;
+        pid_t pid = wait(&status);
+        printf("Worker with pid %d arrived, hooray!!!\n",pid);
+        cur_workers--;
+    }
+}
+
+void cleanup_workers(void) {
+    printf("Main program done, wait for left workers (cur_workers wont be altered)\n");
     int status;
-    wait(&status);
-    char text[]="I got a worker with status ";
-    write(STDOUT_FILENO,text,sizeof(text)-1);
-    //write(STDOUT_FILENO,&status,sizeof(status));
-    write(STDOUT_FILENO,"\n",1);
+    pid_t pid;
+    while((pid=wait(&status))!=-1)
+        printf("Worker with pid %d arrived, hooray!!!\n",pid);
 }
