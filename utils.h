@@ -10,6 +10,7 @@ enum return_codes {
     FORK_ERR,
     PIPE_ERR,
     EXEC_ERR,
+    SIGNALFD_ERR,
 };
 
 enum status_codes {
@@ -30,6 +31,7 @@ struct sync_info_rec {
     sync_info_lookup_free(sync_info_mem_store); \
     free(worker_queue); \
     if (config_file != NULL) fclose(config_file); \
+    close(signal_fd); \
     PRINT_CMD; \
     return RETURN_CODE; \
 }

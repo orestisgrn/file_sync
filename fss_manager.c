@@ -21,9 +21,14 @@ int cur_workers = 0;
 int worker_limit = 5;
 sigset_t sigchld;
 
+Queue worker_queue;
+
+String create_all_string(void);
+
 int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
-void collect_workers(void);
-void cleanup_workers(void);
+int spawn_worker(struct work_rec *work_rec);
+int collect_workers(void);
+int cleanup_workers(void);
 
 int main(int argc,char **argv) {
     sigemptyset(&sigchld);
@@ -37,7 +42,6 @@ int main(int argc,char **argv) {
     char *config = NULL;
     FILE *config_file=NULL;
     Sync_Info_Lookup sync_info_mem_store=NULL;
-    Queue worker_queue=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -84,8 +88,7 @@ int main(int argc,char **argv) {
     }
     sync_info_mem_store = sync_info_lookup_create(200);
     if (sync_info_mem_store==NULL) {
-        perror("Memory allocation error\n");
-        return ALLOC_ERR;
+        CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
     }
     worker_queue = queue_create();
     if (worker_queue==NULL) {
@@ -100,7 +103,9 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
-    cleanup_workers();
+    int cleanup_code;
+    if ((cleanup_code=cleanup_workers())!=0)
+        CLEAN_AND_EXIT( ,cleanup_code);
     printf("%d\n",cur_workers);//
     CLEAN_AND_EXIT( ,0);
 }
@@ -179,7 +184,8 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
         closedir(target_dir);
         int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
         int insert_code;
-        struct sync_info_rec *rec = sync_info_insert(sync_info_mem_store,source,target,watch_desc,&insert_code);
+        struct work_rec work_rec;
+        work_rec.rec = sync_info_insert(sync_info_mem_store,source,target,watch_desc,&insert_code);
         printf("%d %d\n",insert_code,watch_desc);
         if (insert_code==DUPL) {
             printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
@@ -189,55 +195,106 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             continue;
         }
         else if (insert_code==FAILED) {
-            inotify_rm_watch(inotify_fd,watch_desc);
             string_free(source);
             string_free(target);
             return ALLOC_ERR;
         }
-        collect_workers();
-        if (cur_workers==worker_limit) {        // Maybe make that a function (spawn_worker)
-            continue;
-        }
-        else {
-            cur_workers++;
-            if (pipe(rec->pipes)==-1) {
-                perror("Pipe couldn't be created\n");
-                return PIPE_ERR;
-            }
-            pid_t pid;
-            if ((pid=fork())==-1) {
-                perror("Worker process couldn't be spawned\n");
-                return FORK_ERR;
-            }
-            else if (pid==0) {
-                close(rec->pipes[0]);
-                dup2(rec->pipes[1],STDOUT_FILENO);
-                char op[2] = { FULL+'0','\0' };
-                execl("./worker","worker",string_ptr(source),string_ptr(target),"ALL",op,NULL);
-                perror("Worker binary couldn't be executed\n");
-                return EXEC_ERR;
-            }
-            close(rec->pipes[1]);
-        }
+        work_rec.filename = create_all_string();
+        if (work_rec.filename==NULL)
+            return ALLOC_ERR;
+        int collect_code;
+        if ((collect_code=collect_workers())!=0)
+            return collect_code;
+        int spawn_code;
+        work_rec.op = FULL;
+        if ((spawn_code=spawn_worker(&work_rec))!=0)
+            return spawn_code;
     } while (ch!=EOF);
     return 0;
 }
 
-void collect_workers(void) {
+int collect_workers(void) {
     static struct signalfd_siginfo siginfo;
     printf("Here to collect workers\n");
     while (read(signal_fd,&siginfo,sizeof(siginfo))!=-1) {
         int status;
         pid_t pid = wait(&status);
         printf("Worker with pid %d arrived, hooray!!!\n",pid);
+        struct work_rec *work_rec;
         cur_workers--;
+        if ((work_rec=queue_pop(worker_queue))!=NULL) {
+            int spawn_code;
+            if ((spawn_code=spawn_worker(work_rec))!=0) {
+                string_free(work_rec->filename);
+                free(work_rec);
+                return spawn_code;
+            }
+            string_free(work_rec->filename); // Shouldn't do (spawn_worker does that)
+            free(work_rec);
+        }
     }
+    return 0;
 }
 
-void cleanup_workers(void) {
+int cleanup_workers(void) {
     printf("Main program done, wait for left workers (cur_workers wont be altered)\n");
     int status;
     pid_t pid;
-    while((pid=wait(&status))!=-1)
+    while((pid=wait(&status))!=-1) {
         printf("Worker with pid %d arrived, hooray!!!\n",pid);
+        struct work_rec *work_rec;
+        cur_workers--;
+        if ((work_rec=queue_pop(worker_queue))!=NULL) {
+            int spawn_code;
+            if ((spawn_code=spawn_worker(work_rec))!=0) {
+                string_free(work_rec->filename);
+                free(work_rec);
+                return spawn_code;
+            }
+            free(work_rec);
+        }
+    }
+    return 0;
+}
+
+int spawn_worker(struct work_rec *work_rec) {
+    if (cur_workers==worker_limit) {
+        if (!queue_push(worker_queue,work_rec->rec,work_rec->filename,work_rec->op)) {
+            perror("Couldn't push worker to queue\n");
+            string_free(work_rec->filename);
+            return ALLOC_ERR;
+        }
+    }
+    else {
+        cur_workers++;
+        if (pipe(work_rec->rec->pipes)==-1) {
+            perror("Pipe couldn't be created\n");
+            return PIPE_ERR;
+        }
+        pid_t pid;
+        if ((pid=fork())==-1) {
+            perror("Worker process couldn't be spawned\n");
+            return FORK_ERR;
+        }
+        else if (pid==0) {
+            close(work_rec->rec->pipes[0]);
+            dup2(work_rec->rec->pipes[1],STDOUT_FILENO);
+            char op_str[2] = { work_rec->op+'0','\0' };
+            execl("./worker","worker",string_ptr(work_rec->rec->source_dir),
+                    string_ptr(work_rec->rec->target_dir),string_ptr(work_rec->filename),op_str,NULL);
+            perror("Worker binary couldn't be executed\n");
+            return EXEC_ERR;
+        }
+        close(work_rec->rec->pipes[1]);
+        string_free(work_rec->filename);
+    }
+    return 0;
+}
+
+String create_all_string(void) {
+    String all=string_create(3);
+    if (all==NULL)
+        return NULL;
+    string_cpy(all,"ALL");
+    return all;
 }

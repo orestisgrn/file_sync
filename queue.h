@@ -3,12 +3,11 @@
 typedef struct queue* Queue;
 
 struct work_rec {
-    String source;
-    String target;
+    struct sync_info_rec *rec;
     String filename;
     int op;
 };
 
 Queue queue_create(void);
-int queue_push(Queue q,String source,String target,String filename,int op);
+int queue_push(Queue q,struct sync_info_rec *rec,String filename,int op);
 struct work_rec *queue_pop(Queue q);
