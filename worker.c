@@ -100,6 +100,12 @@ int copy_file(String input, String output) {        // Edge case: files with the
     if ((infile=open(string_ptr(input),O_RDONLY))==-1) {
         return errno;
     }
+    struct stat in_stat;
+    if ((fstat(infile,&in_stat)==-1) || ((in_stat.st_mode & S_IFMT) != S_IFREG)) {
+        error = errno;
+        close(infile);
+        return error;
+    }
     if ((outfile=open(string_ptr(output),O_WRONLY | O_CREAT | O_TRUNC,0644))==-1) {
         error = errno;
         close(infile);

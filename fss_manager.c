@@ -15,15 +15,15 @@
 #include "worker.h"
 #include "queue.h"
 
-int cur_workers = 0;
+volatile sig_atomic_t cur_workers = 0;
 int worker_limit = 5;
+sigset_t sigchld;
 
 int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
 void collect_worker(int signo);
 
 int main(int argc,char **argv) {
-    sigset_t mask;
-    sigemptyset(&mask);
+    sigemptyset(&sigchld);
     static struct sigaction act;
     act.sa_handler = collect_worker;
     sigaction(SIGCHLD,&act,NULL);
@@ -95,13 +95,13 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
-    int status;
-    while (wait(&status)!=-1);
+    int status;//
+    while (wait(&status)!=-1);//
+    printf("%d\n",cur_workers);//
     CLEAN_AND_EXIT( ,0);
-    return 0;
 }
 
-int skip_white(FILE *file) {
+int skip_white(FILE *file) {        // Write read_config with low level I/O to use select/poll
     int ch;
     while(isspace(ch=fgetc(file)));
     return ch;
@@ -190,7 +190,8 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
             string_free(target);
             return ALLOC_ERR;
         }
-        if (cur_workers==worker_limit) {
+        // sigprocmask for cur_workers here
+        if (cur_workers==worker_limit) {        // Maybe make that a function (spawn_worker)
             continue;
         }
         else {
@@ -219,6 +220,11 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
 }
 
 void collect_worker(int signo) {
-    //char text[] = "I got the child\n";
-    //write(STDOUT_FILENO,text,sizeof(text));
+    cur_workers--;
+    int status;
+    wait(&status);
+    char text[]="I got a worker with status ";
+    write(STDOUT_FILENO,text,sizeof(text)-1);
+    //write(STDOUT_FILENO,&status,sizeof(status));
+    write(STDOUT_FILENO,"\n",1);
 }
