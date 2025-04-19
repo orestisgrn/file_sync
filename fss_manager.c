@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/signalfd.h>
+#include <time.h>
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
@@ -22,6 +23,8 @@ int worker_limit = 5;
 sigset_t sigchld;
 
 Queue worker_queue;
+
+FILE *log_file;
 
 String create_all_string(void);
 
@@ -38,7 +41,7 @@ int main(int argc,char **argv) {
         return SIGNALFD_ERR;
     }
     char opt = '\0';
-    char *logfile = NULL;
+    char *logname = NULL;
     char *config = NULL;
     FILE *config_file=NULL;
     Sync_Info_Lookup sync_info_mem_store=NULL;
@@ -50,7 +53,7 @@ int main(int argc,char **argv) {
             char *wrong_char;
             switch (opt) {
                 case 'l':
-                    logfile = *argv;
+                    logname = *argv;
                     break;
                 case 'c':
                     config = *argv;
@@ -76,6 +79,14 @@ int main(int argc,char **argv) {
             }
             opt = 0;
         }
+    }
+    if (logname==NULL) {
+        perror("No logfile given\n");
+        return ARGS_ERR;
+    }
+    if ((log_file=fopen(logname,"a"))==NULL) {
+        perror("Logfile couldn't open\n");
+        return FOPEN_ERR;
     }
     if (opt != '\0') {
         perror("Option without argument\n");
@@ -106,11 +117,11 @@ int main(int argc,char **argv) {
     int cleanup_code;
     if ((cleanup_code=cleanup_workers())!=0)
         CLEAN_AND_EXIT( ,cleanup_code);
-    printf("%d\n",cur_workers);//
+    //printf("%d\n",cur_workers);
     CLEAN_AND_EXIT( ,0);
 }
 
-int skip_white(FILE *file) {        // Write read_config with low level I/O to use select/poll
+int skip_white(FILE *file) {
     int ch;
     while(isspace(ch=fgetc(file)));
     return ch;
@@ -159,7 +170,7 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
         }
         DIR *source_dir;
         if ((source_dir=opendir(string_ptr(source)))==NULL) {
-            printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(source));
+            printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(source));//?
             string_free(source);
             string_free(target);
             continue;
@@ -172,11 +183,11 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
         if (string_cpy(source,real_source)==-1)
             return ALLOC_ERR;
         free(real_source);
-        printf("%s\n",string_ptr(source));//
-        printf("%s\n",string_ptr(target));//
+        //printf("%s\n",string_ptr(source));
+        //printf("%s\n",string_ptr(target));
         DIR *target_dir;
         if ((target_dir=opendir(string_ptr(target)))==NULL) {
-            printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(target));
+            printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(target));//?
             string_free(source);
             string_free(target);
             continue;
@@ -186,11 +197,11 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
         int insert_code;
         struct work_rec work_rec;
         work_rec.rec = sync_info_insert(sync_info_mem_store,source,target,watch_desc,&insert_code);
-        printf("%d %d\n",insert_code,watch_desc);
+        //printf("%d %d\n",insert_code,watch_desc);
         if (insert_code==DUPL) {
-            printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
-            inotify_rm_watch(inotify_fd,watch_desc);
-            string_free(source);
+            //printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
+            inotify_rm_watch(inotify_fd,watch_desc);    // Warning: may have inotify msgs not needed
+            string_free(source);                        // Solution -> hash individually per diff key
             string_free(target);
             continue;
         }
@@ -209,17 +220,24 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
         work_rec.op = FULL;
         if ((spawn_code=spawn_worker(&work_rec))!=0)
             return spawn_code;
+        char time_str[30];
+        time_t t = time(NULL);
+        strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+        printf("[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(target));
+        printf("[%s] Monitoring started for %s\n",time_str,string_ptr(source));// target is not normalized
+        fprintf(log_file,"[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(target));
+        fprintf(log_file,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
     } while (ch!=EOF);
     return 0;
 }
 
 int collect_workers(void) {
     static struct signalfd_siginfo siginfo;
-    printf("Here to collect workers\n");
+    //printf("Here to collect workers\n");
     while (read(signal_fd,&siginfo,sizeof(siginfo))!=-1) {
         int status;
         pid_t pid = wait(&status);
-        printf("Worker with pid %d arrived, hooray!!!\n",pid);
+        //printf("Worker with pid %d arrived, hooray!!!\n",pid);
         struct work_rec *work_rec;
         cur_workers--;
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
@@ -237,11 +255,11 @@ int collect_workers(void) {
 }
 
 int cleanup_workers(void) {
-    printf("Main program done, wait for left workers (cur_workers wont be altered)\n");
+    //printf("Main program done, wait for left workers (cur_workers wont be altered)\n");
     int status;
     pid_t pid;
     while((pid=wait(&status))!=-1) {
-        printf("Worker with pid %d arrived, hooray!!!\n",pid);
+        //printf("Worker with pid %d arrived, hooray!!!\n",pid);
         struct work_rec *work_rec;
         cur_workers--;
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
@@ -272,7 +290,7 @@ int spawn_worker(struct work_rec *work_rec) {
             return PIPE_ERR;
         }
         pid_t pid;
-        if ((pid=fork())==-1) {
+        if ((pid=fork())==-1) {             // Maybe queue no forked work recs
             perror("Worker process couldn't be spawned\n");
             return FORK_ERR;
         }
