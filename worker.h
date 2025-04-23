@@ -4,3 +4,5 @@ enum operations {
     MODIFIED,
     DELETED,
 };
+
+char *op_strings[] = { "FULL", "ADDED", "MODIFIED", "DELETED" };

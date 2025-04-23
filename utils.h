@@ -1,4 +1,5 @@
 #include "string.h"
+#include <time.h>
 
 enum return_codes {
     ARGS_ERR=1,
@@ -21,7 +22,7 @@ struct sync_info_rec {
     String source_dir;
     String target_dir;
     int status;
-    int last_sync_time;
+    time_t last_sync_time;
     int error_count;
     int watch_desc;
     int pipes[2];

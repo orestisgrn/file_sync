@@ -17,19 +17,23 @@
 #include "worker.h"
 #include "queue.h"
 
+#include <string.h>
+
 int signal_fd;
 int cur_workers = 0;
 int worker_limit = 5;
 sigset_t sigchld;
 
+Sync_Info_Lookup sync_info_mem_store;
 Queue worker_queue;
 
 FILE *log_file;
 
 String create_all_string(void);
 
-int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd);
+int read_config(FILE *config_file, int inotify_fd);
 int spawn_worker(struct work_rec *work_rec);
+void handle_worker_term(struct sync_info_rec *rec, pid_t pid);
 int collect_workers(void);
 int cleanup_workers(void);
 
@@ -44,7 +48,6 @@ int main(int argc,char **argv) {
     char *logname = NULL;
     char *config = NULL;
     FILE *config_file=NULL;
-    Sync_Info_Lookup sync_info_mem_store=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -110,7 +113,7 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Config file couldn't open\n"),FOPEN_ERR);
         }
         int code;
-        if ((code=read_config(config_file,sync_info_mem_store,inotify_fd))!=0) {
+        if ((code=read_config(config_file,inotify_fd))!=0) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
@@ -127,7 +130,7 @@ int skip_white(FILE *file) {
     return ch;
 }
 
-int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int inotify_fd) {
+int read_config(FILE *config_file, int inotify_fd) {
     int ch;
     String source,target;
     do {
@@ -233,13 +236,13 @@ int read_config(FILE *config_file, Sync_Info_Lookup sync_info_mem_store, int ino
 
 int collect_workers(void) {
     static struct signalfd_siginfo siginfo;
-    //printf("Here to collect workers\n");
     while (read(signal_fd,&siginfo,sizeof(siginfo))!=-1) {
         int status;
         pid_t pid = wait(&status);
-        //printf("Worker with pid %d arrived, hooray!!!\n",pid);
         struct work_rec *work_rec;
         cur_workers--;
+        struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
+        handle_worker_term(rec,pid);
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
@@ -247,7 +250,6 @@ int collect_workers(void) {
                 free(work_rec);
                 return spawn_code;
             }
-            string_free(work_rec->filename); // Shouldn't do (spawn_worker does that)
             free(work_rec);
         }
     }
@@ -255,13 +257,13 @@ int collect_workers(void) {
 }
 
 int cleanup_workers(void) {
-    //printf("Main program done, wait for left workers (cur_workers wont be altered)\n");
     int status;
     pid_t pid;
     while((pid=wait(&status))!=-1) {
-        //printf("Worker with pid %d arrived, hooray!!!\n",pid);
         struct work_rec *work_rec;
         cur_workers--;
+        struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
+        handle_worker_term(rec,pid);
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
@@ -295,18 +297,55 @@ int spawn_worker(struct work_rec *work_rec) {
             return FORK_ERR;
         }
         else if (pid==0) {
-            close(work_rec->rec->pipes[0]);
+            dup2(work_rec->rec->pipes[0],STDIN_FILENO);
             dup2(work_rec->rec->pipes[1],STDOUT_FILENO);
+            write(STDOUT_FILENO,&work_rec->rec->watch_desc,sizeof(int));  // warning: change types if struct changes
             char op_str[2] = { work_rec->op+'0','\0' };
             execl("./worker","worker",string_ptr(work_rec->rec->source_dir),
                     string_ptr(work_rec->rec->target_dir),string_ptr(work_rec->filename),op_str,NULL);
             perror("Worker binary couldn't be executed\n");
             return EXEC_ERR;
         }
-        close(work_rec->rec->pipes[1]);
         string_free(work_rec->filename);
     }
     return 0;
+}
+
+void handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
+    rec->last_sync_time = time(NULL);       // Only full sync for now
+    int op,file_num,success_num,buffer_count;
+    read(rec->pipes[0],&op,sizeof(op));
+    read(rec->pipes[0],&file_num,sizeof(file_num));
+    read(rec->pipes[0],&success_num,sizeof(success_num));
+    read(rec->pipes[0],&buffer_count,sizeof(buffer_count));
+    char *result;
+    char *copy_msg;
+    int two_args=0;
+    if (success_num==file_num) {
+        result="SUCCESS";
+        copy_msg="[%d files copied]\n";
+    }
+    else if (success_num==0) {
+        result="ERROR";
+        copy_msg="[%d skipped]\n";
+    }
+    else {
+        result="PARTIAL";
+        copy_msg="[%d files copied, %d skipped]\n";
+        two_args=1;
+    }
+    char time_str[30];
+    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
+    fprintf(log_file,"[%s] [%s] [%s] [%d] [%s]\n[%s] ",time_str,string_ptr(rec->source_dir),
+                                                        string_ptr(rec->target_dir),pid,op_strings[op],
+                                                        result);
+    if (two_args)
+        fprintf(log_file,copy_msg,success_num,file_num-success_num);
+    else
+        fprintf(log_file,copy_msg,file_num);
+    // Maybe check for the pipe errors here
+    close(rec->pipes[0]);
+    close(rec->pipes[1]);
 }
 
 String create_all_string(void) {

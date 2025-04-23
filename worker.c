@@ -4,73 +4,126 @@
 #include <dirent.h>
 #include <errno.h>
 #include <sys/stat.h>
+#include <stdlib.h>
 #include <fcntl.h>
 #include "worker.h"
 #include "string.h"
 
 #define BUFFSIZE 100
 
-int full_sync(char *source,char *target);
-int add_file(char *source,char *target,char *file);
-int modify_file(char *source,char *target,char *file);
-int deleted_file(char *source,char *target,char *file);
+void full_sync(char *source,char *target);
+void add_file(char *source,char *target,char *file);
+void modify_file(char *source,char *target,char *file);
+void deleted_file(char *source,char *target,char *file);
 
 String build_path(char *source,char *target);
-int write_report(char *err);
-
+void write_report(int op, char **err, int buffer_count, int file_num, int success_num);
+void store_to_buffer(int err,char ***buffer, int *buffer_count, int *buffer_size);
 int copy_file(String input, String output);
 
 int main(int argc,char **argv) {
+    int watch_desc;
+    read(STDIN_FILENO,&watch_desc,sizeof(int));  // warning: change type if struct rec changes
     if (!strcmp(argv[3],"ALL")) {
-        return full_sync(argv[1],argv[2]);
+        full_sync(argv[1],argv[2]);
+        return watch_desc;
     }
     char op = argv[4][0] - '0';     // assumes operation codes are single digit numbers
     switch (op) {
         case ADDED:
-            return add_file(argv[1],argv[2],argv[3]);
+            add_file(argv[1],argv[2],argv[3]);
+            break;
         case MODIFIED:
-            return modify_file(argv[1],argv[2],argv[3]);
+            modify_file(argv[1],argv[2],argv[3]);
+            break;
         case DELETED:
-            return deleted_file(argv[1],argv[2],argv[3]);
+            deleted_file(argv[1],argv[2],argv[3]);
+            break;
     }
+    return watch_desc;
 }
 
-int full_sync(char *source,char *target) {
+void full_sync(char *source,char *target) {
     DIR *dir_ptr;
+    int buffer_size=50;
+    char **buffer = malloc(buffer_size*sizeof(char*));
+    int buffer_count=0;
+    int file_num=0;
+    int success_num=0;
+    if (buffer==NULL) {
+        char *err = strerror(errno);
+        write_report(FULL,&err,1,-1,0);
+        return;
+    }
     if ((dir_ptr=opendir(source))==NULL) {
-        return write_report(strerror(errno));
+        char *err = strerror(errno);
+        write_report(FULL,&err,1,-1,0);
+        free(buffer);
+        return;
     }
     struct dirent *direntp;
+    errno = 0;
     while ((direntp=readdir(dir_ptr))!=NULL) {
+        file_num++;
         String file_path = build_path(source,direntp->d_name);
-        if (file_path==NULL)
-            return write_report(strerror(errno));
+        if (file_path==NULL) {
+            store_to_buffer(errno,&buffer,&buffer_count,&buffer_size);
+            continue;
+        }
         String new_file_path = build_path(target,direntp->d_name);
-        if (file_path==NULL)
-            return write_report(strerror(errno));
+        if (new_file_path==NULL) {
+            store_to_buffer(errno,&buffer,&buffer_count,&buffer_size);
+            string_free(file_path);
+            return;
+        }
         int cp_code=copy_file(file_path,new_file_path);
         string_free(new_file_path);
         string_free(file_path);
+        if (cp_code==-1) {
+            file_num--;
+            continue;
+        }
+        if (cp_code!=0) {
+            store_to_buffer(cp_code,&buffer,&buffer_count,&buffer_size);
+            continue;
+        }
+        success_num++;
+        errno = 0;
     }
+    if (errno != 0) {
+        store_to_buffer(errno,&buffer,&buffer_count,&buffer_size);
+    }
+    write_report(FULL,buffer,buffer_count,file_num,success_num);
+    free(buffer);
     closedir(dir_ptr);
-    return 0;
 }
 
-int add_file(char *source,char *target,char *file) {
-    return 0;
+void add_file(char *source,char *target,char *file) {
+
 }
 
-int modify_file(char *source,char *target,char *file) {
-    return 0;
+void modify_file(char *source,char *target,char *file) {
+
 }
 
-int deleted_file(char *source,char *target,char *file) {
-    return 0;
+void deleted_file(char *source,char *target,char *file) {
+
 }
 
-int write_report(char *err) {
-    write(STDOUT_FILENO,err,strlen(err)+1);//
-    return 0;
+void write_report(int op, char **err, int buffer_count, int file_num, int success_num) {
+    write(STDOUT_FILENO,&op,sizeof(op));
+    write(STDOUT_FILENO,&file_num,sizeof(file_num));
+    write(STDOUT_FILENO,&success_num,sizeof(success_num));
+    write(STDOUT_FILENO,&buffer_count,sizeof(buffer_count));
+    if (op==FULL) {
+        for (int i=0;i<buffer_count;i++) {
+            write(STDOUT_FILENO,err[i],strlen(err[i]));
+            write(STDOUT_FILENO,"\n",1);
+        }
+    }
+    else {
+
+    }
 }
 
 String build_path(char *source,char *target) {
@@ -101,10 +154,14 @@ int copy_file(String input, String output) {        // Edge case: files with the
         return errno;
     }
     struct stat in_stat;
-    if ((fstat(infile,&in_stat)==-1) || ((in_stat.st_mode & S_IFMT) != S_IFREG)) {
+    if (fstat(infile,&in_stat)==-1) {
         error = errno;
         close(infile);
         return error;
+    }
+    if ((in_stat.st_mode & S_IFMT) != S_IFREG) {
+        close(infile);
+        return -1;
     }
     if ((outfile=open(string_ptr(output),O_WRONLY | O_CREAT | O_TRUNC,0644))==-1) {
         error = errno;
@@ -128,4 +185,18 @@ int copy_file(String input, String output) {        // Edge case: files with the
     close(infile);
     close(outfile);
     return 0;
+}
+
+void store_to_buffer(int err, char ***buffer, int *buffer_count, int *buffer_size) {
+    if (*buffer_count==*buffer_size) {
+        char **temp_buf = realloc(buffer,2*(*buffer_size)*sizeof(char*));
+        if (temp_buf==NULL) {
+            return;
+        }
+        *buffer = temp_buf;
+        *buffer_size*=2;
+    }
+    (*buffer)[*buffer_count]=strerror(err);
+    (*buffer_count)++;
+    return;
 }
