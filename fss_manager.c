@@ -36,6 +36,9 @@ String create_all_string(void);
 char *fss_in  = FSS_IN;
 char *fss_out = FSS_OUT;
 
+int fss_in_fd=-1;
+int fss_out_fd=-1;
+
 int read_config(FILE *config_file, int inotify_fd);
 int spawn_worker(struct work_rec *work_rec);
 void handle_worker_term(struct sync_info_rec *rec, pid_t pid);
@@ -45,7 +48,6 @@ int cleanup_workers(void);
 
 int main(int argc,char **argv) {
     FILE *config_file=NULL;
-    int fss_in_fd=-1,fss_out_fd=-1;
     unlink(fss_in);
     unlink(fss_out);
     if (mkfifo(fss_in,0660)==-1 || mkfifo(fss_out,0660)==-1) {
@@ -164,14 +166,30 @@ int main(int argc,char **argv) {
                     CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
                 }
                 while (1) {
-                    if (string_push(cmd,ch)==-1)
+                    if (string_push(cmd,ch)==-1) {
+                        string_free(cmd);
                         CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                    }
                     if (ch=='\n')
                         break;
                     read(fss_in_fd,&ch,sizeof(ch));
                 }
-                process_command(cmd);
+                int cmd_code;
+                fss_out_fd=open(fss_out,O_WRONLY);
+                if (fss_out_fd==-1) {
+                    string_free(cmd);
+                    CLEAN_AND_EXIT(perror("fss_out couldn't open\n"),FIFO_ERR);
+                }
+                if ((cmd_code=process_command(cmd))==-1) {
+                    string_free(cmd);
+                    close(fss_out_fd);
+                    CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                }
                 string_free(cmd);
+                close(fss_out_fd);
+                if (cmd_code=='s') {
+                    break;
+                }
             }
             waiting_fds[FSS_IN_FD].revents=0;
         }
@@ -296,6 +314,7 @@ int read_config(FILE *config_file, int inotify_fd) {
 
 int collect_workers(void) {
     static struct signalfd_siginfo siginfo;
+    int count=0;
     while (read(signal_fd,&siginfo,sizeof(siginfo))!=-1) {
         int status;
         pid_t pid = wait(&status);
@@ -312,7 +331,9 @@ int collect_workers(void) {
             }
             free(work_rec);
         }
+        count++;
     }
+    printf("%d\n",count);
     return 0;
 }
 
@@ -418,6 +439,7 @@ void handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
 int process_command(String cmd) {           // Command ends in \n
     const char *cmd_ptr = string_ptr(cmd);
     String argv = string_create(15);
+    int argc=0;
     if (argv==NULL) {
         return -1;
     }
@@ -430,7 +452,18 @@ int process_command(String cmd) {           // Command ends in \n
             cmd_ptr++;
         }
         if (string_length(argv)!=0) {
-            printf("%s\n",string_ptr(argv));
+            if (!strcmp(string_ptr(argv),"shutdown")) {
+                write(fss_out_fd,"s",sizeof(char));
+                string_free(argv);
+                return 's';
+            }
+            else {
+                printf("%s\n",string_ptr(argv));
+                write(fss_out_fd,"e",sizeof(char));
+                write(fss_out_fd,string_ptr(argv),string_length(argv)+1);
+                string_free(argv);
+                return 'e';
+            }
             string_free(argv);
             argv = string_create(15);
             if (argv==NULL) {

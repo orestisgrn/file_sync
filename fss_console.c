@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
         perror("Option without argument\n");
         return ARGS_ERR;
     }
-    int fss_in_fd;
+    int fss_in_fd,fss_out_fd;
     if ((fss_in_fd=open(fss_in,O_WRONLY | O_NONBLOCK))==-1) {
         printf("The manager isn't running\n");
         return -1;
@@ -53,6 +53,7 @@ int main(int argc, char **argv) {
             return ALLOC_ERR;
         }
         int wrote_char=0;
+        printf("> ");
         do {
             ch = getchar();
             if (ch==EOF) {
@@ -69,8 +70,33 @@ int main(int argc, char **argv) {
                 return ALLOC_ERR;
             }
         } while (ch!='\n');
-        if (wrote_char)
+        if (wrote_char) {
             write(fss_in_fd,string_ptr(cmd),string_length(cmd));
+            if ((fss_out_fd=open(fss_out,O_RDONLY))==-1) {
+                perror("fss_out couldn't open\n");
+                return FIFO_ERR;
+            }
+            char return_code;
+            read(fss_out_fd,&return_code,sizeof(return_code));
+            if (return_code=='e') {
+                printf("Invalid command: ");
+                char ch;
+                while (1) {
+                    read(fss_out_fd,&ch,sizeof(ch));
+                    if (ch=='\0')
+                        break;
+                    putchar(ch);
+                }
+                putchar('\n');
+            }
+            else if (return_code=='s') {
+                printf("Shutting down...\n");
+                string_free(cmd);
+                close(fss_out_fd);
+                break;
+            }
+            close(fss_out_fd);
+        }
         string_free(cmd);
     }
     close(fss_in_fd);
