@@ -22,6 +22,16 @@ enum status_codes {
     ACTIVE,
 };
 
+enum cmd_codes {
+    SHUTDOWN,
+    ADD,
+    CANCEL,
+    STATUS,
+    SYNC,
+    INVALID,
+    NOT_WATCHED,
+};
+
 struct sync_info_rec {
     String source_dir;
     String target_dir;

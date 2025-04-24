@@ -314,10 +314,11 @@ int read_config(FILE *config_file, int inotify_fd) {
 
 int collect_workers(void) {
     static struct signalfd_siginfo siginfo;
-    int count=0;
-    while (read(signal_fd,&siginfo,sizeof(siginfo))!=-1) {
-        int status;
-        pid_t pid = wait(&status);
+    int count=0;//
+    int status;
+    pid_t pid;
+    while ((pid=waitpid(-1,&status,WNOHANG))>0) {
+        read(signal_fd,&siginfo,sizeof(siginfo));
         struct work_rec *work_rec;
         cur_workers--;
         struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
@@ -331,9 +332,9 @@ int collect_workers(void) {
             }
             free(work_rec);
         }
-        count++;
+        count++;//
     }
-    printf("%d\n",count);
+    printf("%d\n",count);//
     return 0;
 }
 
@@ -436,10 +437,13 @@ void handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
     close(rec->pipes[1]);
 }
 
+int handle_cmd(String argv);
+
 int process_command(String cmd) {           // Command ends in \n
     const char *cmd_ptr = string_ptr(cmd);
     String argv = string_create(15);
     int argc=0;
+    char cmd_code;
     if (argv==NULL) {
         return -1;
     }
@@ -452,29 +456,95 @@ int process_command(String cmd) {           // Command ends in \n
             cmd_ptr++;
         }
         if (string_length(argv)!=0) {
-            if (!strcmp(string_ptr(argv),"shutdown")) {
-                write(fss_out_fd,"s",sizeof(char));
-                string_free(argv);
-                return 's';
+            if (argc==0) {
+                cmd_code=handle_cmd(argv);
+                if (cmd_code==SHUTDOWN || cmd_code==INVALID) {
+                    string_free(argv);
+                    return cmd_code;
+                }
+                write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+            }
+            else if (argc==1) {
+                DIR *source_dir;
+                if ((source_dir=opendir(string_ptr(argv)))==NULL) {
+                    printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(argv));//?
+                    char invalid=INVALID;
+                    write(fss_out_fd,&invalid,sizeof(invalid));
+                    string_free(argv);
+                    return 0;
+                }
+                closedir(source_dir);
+                char *real_source=realpath(string_ptr(argv),NULL);
+                if (cmd_code==CANCEL) {
+                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                }
+                else if (cmd_code==STATUS) {
+                    struct sync_info_rec *rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    if (rec==NULL) {
+                        char not_watched=NOT_WATCHED;
+                        write(fss_out_fd,&not_watched,sizeof(not_watched));
+                        string_free(argv);
+                        free(real_source);
+                        return 0;
+                    }
+                    printf("%s %s\n",string_ptr(rec->source_dir),string_ptr(rec->target_dir));
+                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                }
+                else if (cmd_code==SYNC) {
+                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                }
+                else {
+                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                }
+                free(real_source);
             }
             else {
-                printf("%s\n",string_ptr(argv));
-                write(fss_out_fd,"e",sizeof(char));
-                write(fss_out_fd,string_ptr(argv),string_length(argv)+1);
-                string_free(argv);
-                return 'e';
+
             }
             string_free(argv);
             argv = string_create(15);
             if (argv==NULL) {
                 return -1;
             }
+            argc++;
         }
         if (*(++cmd_ptr)=='\0')
             break;
     }
     string_free(argv);
+    if (argc==1) {
+        char invalid=INVALID;
+        write(fss_out_fd,&invalid,sizeof(invalid));
+    }
     return 0;
+}
+
+int handle_cmd(String argv) {
+    char ch;
+    if (!strcmp(string_ptr(argv),"shutdown")) {
+        ch = SHUTDOWN;
+        write(fss_out_fd,&ch,sizeof(ch));
+        return SHUTDOWN;
+    }
+    else if (!strcmp(string_ptr(argv),"add")) {
+        return ADD;
+    }
+    else if (!strcmp(string_ptr(argv),"cancel")) {
+        return CANCEL;
+    }
+    else if (!strcmp(string_ptr(argv),"status")) {
+        return STATUS;
+    }
+    else if (!strcmp(string_ptr(argv),"sync")) {
+        return SYNC;
+    }
+    else {
+        ch = INVALID;
+        printf("%s\n",string_ptr(argv));
+        write(fss_out_fd,&ch,sizeof(ch));
+        write(fss_out_fd,string_ptr(argv),string_length(argv)+1);
+        return INVALID;
+    }
 }
 
 String create_all_string(void) {

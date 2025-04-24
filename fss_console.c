@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
             }
             char return_code;
             read(fss_out_fd,&return_code,sizeof(return_code));
-            if (return_code=='e') {
+            if (return_code==INVALID) {
                 printf("Invalid command: ");
                 char ch;
                 while (1) {
@@ -89,11 +89,20 @@ int main(int argc, char **argv) {
                 }
                 putchar('\n');
             }
-            else if (return_code=='s') {
+            else if (return_code==SHUTDOWN) {
                 printf("Shutting down...\n");
                 string_free(cmd);
                 close(fss_out_fd);
                 break;
+            }
+            else {
+                read(fss_out_fd,&ch,sizeof(ch));
+                if (ch==INVALID) {
+                    printf("Source path doesn't exist.\n");
+                }
+                else if (ch==NOT_WATCHED) {
+                    printf("Source path is not being watched.\n");
+                }
             }
             close(fss_out_fd);
         }
