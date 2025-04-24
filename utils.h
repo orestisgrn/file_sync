@@ -1,6 +1,9 @@
 #include "string.h"
 #include <time.h>
 
+#define FSS_IN  "fss_in"
+#define FSS_OUT "fss_out"
+
 enum return_codes {
     ARGS_ERR=1,
     INOTIFY_ERR,
@@ -12,6 +15,7 @@ enum return_codes {
     PIPE_ERR,
     EXEC_ERR,
     SIGNALFD_ERR,
+    FIFO_ERR,
 };
 
 enum status_codes {
@@ -33,6 +37,10 @@ struct sync_info_rec {
     free(worker_queue); \
     if (config_file != NULL) fclose(config_file); \
     if (log_file != NULL) fclose(log_file); \
+    if (fss_in_fd!=-1) close(fss_in_fd); \
+    if (fss_out_fd!=-1) close(fss_out_fd); \
+    unlink(fss_in); \
+    unlink(fss_out); \
     close(signal_fd); \
     PRINT_CMD; \
     return RETURN_CODE; \

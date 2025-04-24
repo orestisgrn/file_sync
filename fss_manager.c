@@ -5,19 +5,21 @@
 #include <limits.h>
 #include <errno.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <dirent.h>
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/signalfd.h>
 #include <time.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <string.h>
 #include "sync_info_lookup.h"
 #include "string.h"
 #include "utils.h"
 #include "worker.h"
 #include "queue.h"
-
-#include <string.h>
 
 int signal_fd;
 int cur_workers = 0;
@@ -31,15 +33,32 @@ FILE *log_file;
 
 String create_all_string(void);
 
+char *fss_in  = FSS_IN;
+char *fss_out = FSS_OUT;
+
 int read_config(FILE *config_file, int inotify_fd);
 int spawn_worker(struct work_rec *work_rec);
 void handle_worker_term(struct sync_info_rec *rec, pid_t pid);
+int process_command(String cmd);
 int collect_workers(void);
 int cleanup_workers(void);
 
 int main(int argc,char **argv) {
+    FILE *config_file=NULL;
+    int fss_in_fd=-1,fss_out_fd=-1;
+    unlink(fss_in);
+    unlink(fss_out);
+    if (mkfifo(fss_in,0660)==-1 || mkfifo(fss_out,0660)==-1) {
+        CLEAN_AND_EXIT(perror("Fifos couldn't be created\n"),FIFO_ERR);
+    }
+    fss_in_fd   = open(fss_in,O_RDONLY | O_NONBLOCK);
+    //fss_out_fd  = open(fss_out,O_WRONLY);
+    if (fss_in_fd==-1) {
+        CLEAN_AND_EXIT(perror("Fifo couldn't open\n"),FIFO_ERR);
+    }
     sigemptyset(&sigchld);
     sigaddset(&sigchld,SIGCHLD); 
+    sigprocmask(SIG_SETMASK,&sigchld,NULL);
     if ((signal_fd=signalfd(-1,&sigchld,SFD_NONBLOCK))==-1) {
         perror("Signal file descriptor initialization error\n");
         return SIGNALFD_ERR;
@@ -47,7 +66,6 @@ int main(int argc,char **argv) {
     char opt = '\0';
     char *logname = NULL;
     char *config = NULL;
-    FILE *config_file=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -116,6 +134,48 @@ int main(int argc,char **argv) {
         if ((code=read_config(config_file,inotify_fd))!=0) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
+    }
+    enum { INOTIFY_FD, FSS_IN_FD, SIGNAL_FD };
+    struct pollfd waiting_fds[] = { {inotify_fd,POLLIN,0}, {fss_in_fd,POLLIN,0}, {signal_fd,POLLIN,0} };
+    printf("Waiting for events here\n");
+    while (poll(waiting_fds,sizeof(waiting_fds)/sizeof(waiting_fds[0]),-1)!=-1) {
+        if (waiting_fds[SIGNAL_FD].revents!=0) {
+            int collect_code;
+            if ((collect_code=collect_workers())!=0) {
+                CLEAN_AND_EXIT(perror("Worker couldn't spawn\n"),collect_code);
+            }
+            waiting_fds[SIGNAL_FD].revents=0;
+            continue;
+        }
+        if (waiting_fds[FSS_IN_FD].revents!=0) {
+            char ch;
+            if (read(fss_in_fd,&ch,sizeof(ch))==0) {
+                printf("Something happened\n");//
+                close(fss_in_fd);
+                fss_in_fd = open(fss_in,O_RDONLY | O_NONBLOCK);
+                if (fss_in_fd==-1) {
+                    CLEAN_AND_EXIT(perror("Fifo couldn't open\n"),FIFO_ERR);
+                }
+                break;//
+            }
+            else {
+                String cmd = string_create(15);
+                if (cmd==NULL) {
+                    CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                }
+                while (1) {
+                    if (string_push(cmd,ch)==-1)
+                        CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                    if (ch=='\n')
+                        break;
+                    read(fss_in_fd,&ch,sizeof(ch));
+                }
+                process_command(cmd);
+                string_free(cmd);
+            }
+            waiting_fds[FSS_IN_FD].revents=0;
+        }
+        // Continue for other cases
     }
     int cleanup_code;
     if ((cleanup_code=cleanup_workers())!=0)
@@ -343,9 +403,45 @@ void handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
         fprintf(log_file,copy_msg,success_num,file_num-success_num);
     else
         fprintf(log_file,copy_msg,file_num);
+    char ch;
+    for (int i=0;i<buffer_count;i++) {  //
+        do {
+            read(rec->pipes[0],&ch,sizeof(ch));
+            putchar(ch);
+        } while (ch!='\n');
+    }
     // Maybe check for the pipe errors here
     close(rec->pipes[0]);
     close(rec->pipes[1]);
+}
+
+int process_command(String cmd) {           // Command ends in \n
+    const char *cmd_ptr = string_ptr(cmd);
+    String argv = string_create(15);
+    if (argv==NULL) {
+        return -1;
+    }
+    while (1) {
+        while (!isspace(*cmd_ptr)) {
+            if (string_push(argv,*cmd_ptr)==-1) {
+                string_free(argv);
+                return -1;
+            }
+            cmd_ptr++;
+        }
+        if (string_length(argv)!=0) {
+            printf("%s\n",string_ptr(argv));
+            string_free(argv);
+            argv = string_create(15);
+            if (argv==NULL) {
+                return -1;
+            }
+        }
+        if (*(++cmd_ptr)=='\0')
+            break;
+    }
+    string_free(argv);
+    return 0;
 }
 
 String create_all_string(void) {
