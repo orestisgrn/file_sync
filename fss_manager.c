@@ -481,14 +481,27 @@ int process_command(String cmd) {           // Command ends in \n
                 else if (cmd_code==STATUS) {
                     struct sync_info_rec *rec = sync_info_path_search(sync_info_mem_store,real_source);
                     if (rec==NULL) {
-                        char not_watched=NOT_WATCHED;
-                        write(fss_out_fd,&not_watched,sizeof(not_watched));
+                        char not_archived=NOT_ARCHIVED;
+                        write(fss_out_fd,&not_archived,sizeof(not_archived));
                         string_free(argv);
                         free(real_source);
                         return 0;
                     }
-                    printf("%s %s\n",string_ptr(rec->source_dir),string_ptr(rec->target_dir));
-                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                    char time_str[30];
+                    if (rec->last_sync_time==-1)
+                        strcpy(time_str,"N/A");
+                    else
+                        strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
+                    time_t t = time(NULL);
+                    char cur_time_str[30];
+                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    printf("[%s] Status requested for %s\n",cur_time_str,string_ptr(rec->source_dir));
+                    printf("Directory: %s\n",string_ptr(rec->source_dir));
+                    printf("Target: %s\n",string_ptr(rec->target_dir));
+                    printf("Last Sync: %s\n",time_str);
+                    printf("Errors: %d\n",rec->error_count);
+                    printf("Status: %s\n",rec->status==ACTIVE ? "Active" : "Inactive");
+                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));       // Also send to console
                 }
                 else if (cmd_code==SYNC) {
                     write(fss_out_fd,&cmd_code,sizeof(cmd_code));

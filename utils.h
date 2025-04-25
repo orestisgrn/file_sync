@@ -20,6 +20,7 @@ enum return_codes {
 
 enum status_codes {
     ACTIVE,
+    INACTIVE,
 };
 
 enum cmd_codes {
@@ -29,7 +30,7 @@ enum cmd_codes {
     STATUS,
     SYNC,
     INVALID,
-    NOT_WATCHED,
+    NOT_ARCHIVED,
 };
 
 struct sync_info_rec {

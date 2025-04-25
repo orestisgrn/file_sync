@@ -100,8 +100,8 @@ int main(int argc, char **argv) {
                 if (ch==INVALID) {
                     printf("Source path doesn't exist.\n");
                 }
-                else if (ch==NOT_WATCHED) {
-                    printf("Source path is not being watched.\n");
+                else if (ch==NOT_ARCHIVED) {
+                    printf("Source path is not archived.\n");
                 }
             }
             close(fss_out_fd);
