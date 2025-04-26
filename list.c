@@ -26,7 +26,7 @@ void list_free(List l,int is_reflist) {
     }
 }
 
-List list_insert_newrec(List l, String key, String val,int watch_desc,int *succ) {
+List list_insert_newrec(List l, String key, String val,int *succ) {
     List new_node = malloc(sizeof(struct list_node));
     if (new_node==NULL) {
         *succ = 0;
@@ -43,7 +43,7 @@ List list_insert_newrec(List l, String key, String val,int watch_desc,int *succ)
     new_node->rec->status = ACTIVE;
     new_node->rec->last_sync_time = -1;
     new_node->rec->error_count = 0;
-    new_node->rec->watch_desc = watch_desc;     // See how to handle pipe field
+    new_node->rec->watch_desc = -1;     // See how to handle pipe field
     new_node->next=l;
     *succ = 1;
     return new_node;

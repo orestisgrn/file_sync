@@ -45,7 +45,7 @@ int main(int argc, char **argv) {
         printf("The manager isn't running\n");
         return -1;
     }
-    while(1) {      // Main console loop
+    while(1) {      // Main console loop            // Idea:redirect STDIN to fss_in (think a bit, huh?)
         int ch;
         String cmd = string_create(15);
         if (cmd==NULL) {

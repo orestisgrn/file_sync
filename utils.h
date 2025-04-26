@@ -50,9 +50,9 @@ struct sync_info_rec {
     if (log_file != NULL) fclose(log_file); \
     if (fss_in_fd!=-1) close(fss_in_fd); \
     if (fss_out_fd!=-1) close(fss_out_fd); \
+    if (signal_fd!=-1) close(signal_fd); \
     unlink(fss_in); \
     unlink(fss_out); \
-    close(signal_fd); \
     PRINT_CMD; \
     return RETURN_CODE; \
 }

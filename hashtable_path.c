@@ -31,10 +31,10 @@ unsigned hash_string(Hashtable_Path h,const char *key) {    // Maybe change hash
     return sum % h->size;
 }
 
-struct sync_info_rec *hashtable_path_insert(Hashtable_Path h,String key,String val,int watch_desc,int *succ) {
+struct sync_info_rec *hashtable_path_insert(Hashtable_Path h,String key,String val,int *succ) {
     List *bucket = &h->arr[hash_string(h,string_ptr(key))];
     if (list_search_path(*bucket,string_ptr(key))==NULL) {
-        *bucket = list_insert_newrec(*bucket,key,val,watch_desc,succ);
+        *bucket = list_insert_newrec(*bucket,key,val,succ);
         if (*succ)
             return list_search_path(*bucket,string_ptr(key));
         else

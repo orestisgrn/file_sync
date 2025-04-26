@@ -21,7 +21,9 @@
 #include "worker.h"
 #include "queue.h"
 
-int signal_fd;
+#define INOTIFY_BUF (sizeof(struct inotify_event)+NAME_MAX+1)
+
+int signal_fd = -1;
 int cur_workers = 0;
 int worker_limit = 5;
 sigset_t sigchld;
@@ -53,7 +55,7 @@ int main(int argc,char **argv) {
     if (mkfifo(fss_in,0660)==-1 || mkfifo(fss_out,0660)==-1) {
         CLEAN_AND_EXIT(perror("Fifos couldn't be created\n"),FIFO_ERR);
     }
-    fss_in_fd   = open(fss_in,O_RDONLY | O_NONBLOCK);
+    fss_in_fd = open(fss_in,O_RDONLY | O_NONBLOCK);
     //fss_out_fd  = open(fss_out,O_WRONLY);
     if (fss_in_fd==-1) {
         CLEAN_AND_EXIT(perror("Fifo couldn't open\n"),FIFO_ERR);
@@ -62,8 +64,7 @@ int main(int argc,char **argv) {
     sigaddset(&sigchld,SIGCHLD); 
     sigprocmask(SIG_SETMASK,&sigchld,NULL);
     if ((signal_fd=signalfd(-1,&sigchld,SFD_NONBLOCK))==-1) {
-        perror("Signal file descriptor initialization error\n");
-        return SIGNALFD_ERR;
+        CLEAN_AND_EXIT(perror("Signal file descriptor initialization error\n"),SIGNALFD_ERR);
     }
     char opt = '\0';
     char *logname = NULL;
@@ -85,40 +86,32 @@ int main(int argc,char **argv) {
                     wrong_char=NULL;
                     worker_limit = strtol(*argv,&wrong_char,10);
                     if (*wrong_char!='\0') {
-                        perror("Worker limit must be int\n");   // Maybe change error text to usage
-                        return ARGS_ERR;
-                    }
+                        CLEAN_AND_EXIT(perror("Worker limit must be int\n"),ARGS_ERR);
+                    }   // Maybe change error text to usage
                     if (worker_limit < 1) {
-                        perror("Worker limit must be a positive integer\n");
-                        return ARGS_ERR;
+                        CLEAN_AND_EXIT(perror("Worker limit must be a positive integer\n"),ARGS_ERR);
                     }
                     break;
                 case '\0':
-                    perror("Argument without option\n");
-                    return ARGS_ERR;
+                    CLEAN_AND_EXIT(perror("Argument without option\n"),ARGS_ERR);
                 default:
-                    fprintf(stderr,"-%c is not an option\n",opt);
-                    return ARGS_ERR;
+                    CLEAN_AND_EXIT(fprintf(stderr,"-%c is not an option\n",opt),ARGS_ERR);
             }
             opt = 0;
         }
     }
     if (logname==NULL) {
-        perror("No logfile given\n");
-        return ARGS_ERR;
+        CLEAN_AND_EXIT(perror("No logfile given\n"),ARGS_ERR);
     }
     if ((log_file=fopen(logname,"a"))==NULL) {
-        perror("Logfile couldn't open\n");
-        return FOPEN_ERR;
+        CLEAN_AND_EXIT(perror("Logfile couldn't open\n"),FOPEN_ERR);
     }
     if (opt != '\0') {
-        perror("Option without argument\n");
-        return ARGS_ERR;
+        CLEAN_AND_EXIT(perror("Option without argument\n"),ARGS_ERR);
     }
     int inotify_fd;
     if ((inotify_fd = inotify_init()) == -1) {
-        perror("Inotify initialization error\n");
-        return INOTIFY_ERR;
+        CLEAN_AND_EXIT(perror("Inotify initialization error\n"),INOTIFY_ERR);
     }
     sync_info_mem_store = sync_info_lookup_create(200);
     if (sync_info_mem_store==NULL) {
@@ -139,7 +132,7 @@ int main(int argc,char **argv) {
     }
     enum { INOTIFY_FD, FSS_IN_FD, SIGNAL_FD };
     struct pollfd waiting_fds[] = { {inotify_fd,POLLIN,0}, {fss_in_fd,POLLIN,0}, {signal_fd,POLLIN,0} };
-    printf("Waiting for events here\n");
+    printf("Waiting for events here\n");//
     while (poll(waiting_fds,sizeof(waiting_fds)/sizeof(waiting_fds[0]),-1)!=-1) {
         if (waiting_fds[SIGNAL_FD].revents!=0) {
             int collect_code;
@@ -151,7 +144,7 @@ int main(int argc,char **argv) {
         }
         if (waiting_fds[FSS_IN_FD].revents!=0) {
             char ch;
-            if (read(fss_in_fd,&ch,sizeof(ch))==0) {
+            if (read(fss_in_fd,&ch,sizeof(ch))==0) {        // Nothing to read --->  fifo closed
                 printf("Something happened\n");//
                 close(fss_in_fd);
                 fss_in_fd = open(fss_in,O_RDONLY | O_NONBLOCK);
@@ -193,7 +186,33 @@ int main(int argc,char **argv) {
             }
             waiting_fds[FSS_IN_FD].revents=0;
         }
-        // Continue for other cases
+        if (waiting_fds[INOTIFY_FD].revents!=0) {
+            static char event_buf[INOTIFY_BUF];
+            read(inotify_fd,event_buf,INOTIFY_BUF);
+            struct inotify_event *event = (struct inotify_event *) event_buf;
+            struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,event->wd);
+            printf("mask = ");
+            struct inotify_event *i = event;
+            if (i->mask & IN_ACCESS) printf("IN_ACCESS ");
+            if (i->mask & IN_ATTRIB) printf("IN_ATTRIB ");
+            if (i->mask & IN_CLOSE_NOWRITE) printf("IN_CLOSE_NOWRITE ");
+            if (i->mask & IN_CLOSE_WRITE) printf("IN_CLOSE_WRITE ");
+            if (i->mask & IN_CREATE) printf("IN_CREATE ");
+            if (i->mask & IN_DELETE) printf("IN_DELETE ");
+            if (i->mask & IN_DELETE_SELF) printf("IN_DELETE_SELF ");
+            if (i->mask & IN_IGNORED) printf("IN_IGNORED ");
+            if (i->mask & IN_ISDIR) printf("IN_ISDIR ");
+            if (i->mask & IN_MODIFY) printf("IN_MODIFY ");
+            if (i->mask & IN_MOVE_SELF) printf("IN_MOVE_SELF ");
+            if (i->mask & IN_MOVED_FROM) printf("IN_MOVED_FROM ");
+            if (i->mask & IN_MOVED_TO) printf("IN_MOVED_TO ");
+            if (i->mask & IN_OPEN) printf("IN_OPEN ");
+            if (i->mask & IN_Q_OVERFLOW) printf("IN_Q_OVERFLOW ");
+            if (i->mask & IN_UNMOUNT) printf("IN_UNMOUNT ");
+            printf("\n");
+            printf("%s %s\n",string_ptr(rec->source_dir),event->name);
+            waiting_fds[INOTIFY_FD].revents=0;
+        }
     }
     int cleanup_code;
     if ((cleanup_code=cleanup_workers())!=0)
@@ -274,19 +293,25 @@ int read_config(FILE *config_file, int inotify_fd) {
             continue;
         }
         closedir(target_dir);
-        int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
         int insert_code;
         struct work_rec work_rec;
-        work_rec.rec = sync_info_insert(sync_info_mem_store,source,target,watch_desc,&insert_code);
-        //printf("%d %d\n",insert_code,watch_desc);
+        work_rec.rec = sync_info_insert(sync_info_mem_store,source,target,&insert_code);
+        printf("%d\n",insert_code);
         if (insert_code==DUPL) {
-            //printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));
-            inotify_rm_watch(inotify_fd,watch_desc);    // Warning: may have inotify msgs not needed
-            string_free(source);                        // Solution -> hash individually per diff key
+            printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));//
+            string_free(source);
             string_free(target);
             continue;
         }
         else if (insert_code==FAILED) {
+            string_free(source);
+            string_free(target);
+            return ALLOC_ERR;
+        }
+        int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
+        printf("%d\n",watch_desc);
+        work_rec.rec->watch_desc = watch_desc;
+        if (sync_info_index_watchdesc(sync_info_mem_store,work_rec.rec,&insert_code)==NULL) {
             string_free(source);
             string_free(target);
             return ALLOC_ERR;

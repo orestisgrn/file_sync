@@ -26,9 +26,9 @@ Sync_Info_Lookup sync_info_lookup_create(int size) {
 }
 
 struct sync_info_rec*
-sync_info_insert(Sync_Info_Lookup ltable,String key,String val,int watch_desc,int *insert_code) {
+sync_info_insert(Sync_Info_Lookup ltable,String key,String val,int *insert_code) {
     int succ;
-    struct sync_info_rec *rec=hashtable_path_insert(ltable->path_lookup,key,val,watch_desc,&succ);
+    struct sync_info_rec *rec=hashtable_path_insert(ltable->path_lookup,key,val,&succ);
     if (rec==NULL) {
         if (succ)
             *insert_code = DUPL;
@@ -36,11 +36,23 @@ sync_info_insert(Sync_Info_Lookup ltable,String key,String val,int watch_desc,in
             *insert_code = FAILED;
     }
     else {
-        rec = hashtable_watchdesc_insert(ltable->wd_lookup,rec,&succ);
-        if (rec==NULL)
-            *insert_code = FAILED;
+        *insert_code = SUCCESS;
+    }
+    return rec;
+}
+
+struct sync_info_rec*
+sync_info_index_watchdesc(Sync_Info_Lookup ltable, struct sync_info_rec *rec, int *insert_code) {
+    int succ;
+    rec = hashtable_watchdesc_insert(ltable->wd_lookup,rec,&succ);
+    if (rec==NULL) {
+        if (succ)
+            *insert_code = DUPL;
         else
-            *insert_code = SUCCESS;
+            *insert_code = FAILED;
+    }
+    else {
+        *insert_code = SUCCESS;
     }
     return rec;
 }
