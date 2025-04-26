@@ -12,7 +12,7 @@
 #define BUFFSIZE 100
 
 void full_sync(char *source,char *target);
-void add_file(char *source,char *target,char *file);
+void add_file(char *source,char *target,char *file);        // warning: write report doesn't write the file name in the end
 void modify_file(char *source,char *target,char *file);
 void deleted_file(char *source,char *target,char *file);
 
@@ -52,7 +52,7 @@ void full_sync(char *source,char *target) {
     int success_num=0;
     if (buffer==NULL) {
         char *err = strerror(errno);
-        write_report(FULL,&err,1,-1,0);
+        write_report(FULL,&err,1,-1,0);         // -1 on file_num means error (to not think zero files, zero copy)
         return;
     }
     if ((dir_ptr=opendir(source))==NULL) {
@@ -74,7 +74,7 @@ void full_sync(char *source,char *target) {
         if (new_file_path==NULL) {
             store_to_buffer(errno,&buffer,&buffer_count,&buffer_size);
             string_free(file_path);
-            return;
+            continue;
         }
         int cp_code=copy_file(file_path,new_file_path);
         string_free(new_file_path);
@@ -99,7 +99,20 @@ void full_sync(char *source,char *target) {
 }
 
 void add_file(char *source,char *target,char *file) {
-
+    String new_file_path = build_path(target,file);
+    if (new_file_path==NULL) {
+        char *err = strerror(errno);
+        write_report(ADDED,&err,1,1,0);
+        return;
+    }
+    if (open(string_ptr(new_file_path),O_WRONLY | O_CREAT | O_TRUNC,0644)==-1) {
+        char *err = strerror(errno);
+        write_report(ADDED,&err,1,1,0);
+    }
+    else {
+        write_report(ADDED,NULL,0,1,1);
+    }
+    write(STDOUT_FILENO,file,strlen(file)+1);
 }
 
 void modify_file(char *source,char *target,char *file) {
@@ -115,14 +128,9 @@ void write_report(int op, char **err, int buffer_count, int file_num, int succes
     write(STDOUT_FILENO,&file_num,sizeof(file_num));
     write(STDOUT_FILENO,&success_num,sizeof(success_num));
     write(STDOUT_FILENO,&buffer_count,sizeof(buffer_count));
-    if (op==FULL) {
-        for (int i=0;i<buffer_count;i++) {
-            write(STDOUT_FILENO,err[i],strlen(err[i]));
-            write(STDOUT_FILENO,"\n",1);
-        }
-    }
-    else {
-
+    for (int i=0;i<buffer_count;i++) {
+        write(STDOUT_FILENO,err[i],strlen(err[i]));
+        write(STDOUT_FILENO,"\n",1);
     }
 }
 

@@ -43,7 +43,7 @@ int fss_out_fd=-1;
 
 int read_config(FILE *config_file, int inotify_fd);
 int spawn_worker(struct work_rec *work_rec);
-void handle_worker_term(struct sync_info_rec *rec, pid_t pid);
+int handle_worker_term(struct sync_info_rec *rec, pid_t pid);
 int process_command(String cmd);
 int collect_workers(void);
 int cleanup_workers(void);
@@ -187,30 +187,32 @@ int main(int argc,char **argv) {
             waiting_fds[FSS_IN_FD].revents=0;
         }
         if (waiting_fds[INOTIFY_FD].revents!=0) {
-            static char event_buf[INOTIFY_BUF];
-            read(inotify_fd,event_buf,INOTIFY_BUF);
-            struct inotify_event *event = (struct inotify_event *) event_buf;
-            struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,event->wd);
-            printf("mask = ");
-            struct inotify_event *i = event;
-            if (i->mask & IN_ACCESS) printf("IN_ACCESS ");
-            if (i->mask & IN_ATTRIB) printf("IN_ATTRIB ");
-            if (i->mask & IN_CLOSE_NOWRITE) printf("IN_CLOSE_NOWRITE ");
-            if (i->mask & IN_CLOSE_WRITE) printf("IN_CLOSE_WRITE ");
-            if (i->mask & IN_CREATE) printf("IN_CREATE ");
-            if (i->mask & IN_DELETE) printf("IN_DELETE ");
-            if (i->mask & IN_DELETE_SELF) printf("IN_DELETE_SELF ");
-            if (i->mask & IN_IGNORED) printf("IN_IGNORED ");
-            if (i->mask & IN_ISDIR) printf("IN_ISDIR ");
-            if (i->mask & IN_MODIFY) printf("IN_MODIFY ");
-            if (i->mask & IN_MOVE_SELF) printf("IN_MOVE_SELF ");
-            if (i->mask & IN_MOVED_FROM) printf("IN_MOVED_FROM ");
-            if (i->mask & IN_MOVED_TO) printf("IN_MOVED_TO ");
-            if (i->mask & IN_OPEN) printf("IN_OPEN ");
-            if (i->mask & IN_Q_OVERFLOW) printf("IN_Q_OVERFLOW ");
-            if (i->mask & IN_UNMOUNT) printf("IN_UNMOUNT ");
-            printf("\n");
-            printf("%s %s\n",string_ptr(rec->source_dir),event->name);
+            static char event_buf[INOTIFY_BUF];         // WARNING!!! : May read MORE than one event
+            int num_read = read(inotify_fd,event_buf,INOTIFY_BUF);
+            for (char *p=event_buf;p<event_buf+num_read; ) {
+                struct inotify_event *event = (struct inotify_event *) p;
+                struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,event->wd);
+                struct work_rec work_rec;
+                work_rec.rec = rec;
+                work_rec.filename = string_create(15);
+                if (work_rec.filename==NULL)
+                    CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                if (string_cpy(work_rec.filename,event->name)==-1) {
+                    string_free(work_rec.filename);
+                    CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                }
+                printf("mask = ");//
+                struct inotify_event *i = event;//
+                if (i->mask & IN_CREATE) { printf("IN_CREATE "); work_rec.op = ADDED; }//
+                if (i->mask & IN_DELETE) { printf("IN_DELETE "); work_rec.op = DELETED; }//
+                if (i->mask & IN_MODIFY) { printf("IN_MODIFY "); work_rec.op = MODIFIED; }//
+                printf("%ld\n",time(NULL));//
+                printf("%s %s\n",string_ptr(rec->source_dir),event->name);//
+                int spawn_code;
+                if ((spawn_code=spawn_worker(&work_rec))!=0)
+                    CLEAN_AND_EXIT( ,spawn_code);
+                p += sizeof(struct inotify_event) + event->len;
+            }
             waiting_fds[INOTIFY_FD].revents=0;
         }
     }
@@ -347,7 +349,8 @@ int collect_workers(void) {
         struct work_rec *work_rec;
         cur_workers--;
         struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
-        handle_worker_term(rec,pid);
+        if (handle_worker_term(rec,pid)==-1)
+            return ALLOC_ERR;
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
@@ -370,7 +373,8 @@ int cleanup_workers(void) {
         struct work_rec *work_rec;
         cur_workers--;
         struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
-        handle_worker_term(rec,pid);
+        if (handle_worker_term(rec,pid)==-1)
+            return ALLOC_ERR;
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
@@ -418,48 +422,91 @@ int spawn_worker(struct work_rec *work_rec) {
     return 0;
 }
 
-void handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
+int handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
     rec->last_sync_time = time(NULL);       // Only full sync for now
     int op,file_num,success_num,buffer_count;
     read(rec->pipes[0],&op,sizeof(op));
-    read(rec->pipes[0],&file_num,sizeof(file_num));
+    read(rec->pipes[0],&file_num,sizeof(file_num));             // -1 means error
     read(rec->pipes[0],&success_num,sizeof(success_num));
     read(rec->pipes[0],&buffer_count,sizeof(buffer_count));
+    char time_str[30];
+    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
     char *result;
     char *copy_msg;
     int two_args=0;
+    fprintf(log_file,"[%s] [%s] [%s] [%d] [%s]\n",time_str,string_ptr(rec->source_dir),
+                                                string_ptr(rec->target_dir),pid,op_strings[op]);
+    String error_str=NULL;
     if (success_num==file_num) {
         result="SUCCESS";
-        copy_msg="[%d files copied]\n";
+        if (op==FULL)
+            copy_msg="[%d files copied]\n";
+        else
+            copy_msg="[File: %s]\n";
     }
     else if (success_num==0) {
         result="ERROR";
-        copy_msg="[%d skipped]\n";
+        if (op==FULL) {
+            copy_msg="[%d skipped]\n";
+        }
+        else {
+            copy_msg="[File: %s - %s]\n";
+            if ((error_str=string_create(10))==NULL)
+                return -1;
+            char ch;
+            while (1) {
+                read(rec->pipes[0],&ch,sizeof(ch));
+                if (ch=='\n')
+                    break;
+                if (string_push(error_str,ch)==-1) {
+                    string_free(error_str);
+                    return -1;
+                }
+            }
+            two_args=1;
+        }
     }
     else {
         result="PARTIAL";
         copy_msg="[%d files copied, %d skipped]\n";
         two_args=1;
     }
-    char time_str[30];
-    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
-    fprintf(log_file,"[%s] [%s] [%s] [%d] [%s]\n[%s] ",time_str,string_ptr(rec->source_dir),
-                                                        string_ptr(rec->target_dir),pid,op_strings[op],
-                                                        result);
-    if (two_args)
-        fprintf(log_file,copy_msg,success_num,file_num-success_num);
-    else
-        fprintf(log_file,copy_msg,file_num);
-    char ch;
-    for (int i=0;i<buffer_count;i++) {  //
-        do {
-            read(rec->pipes[0],&ch,sizeof(ch));
-            putchar(ch);
-        } while (ch!='\n');
+    fprintf(log_file,"[%s] ",result);
+    if (op==FULL) {
+        if (two_args)
+            fprintf(log_file,copy_msg,success_num,file_num-success_num);
+        else
+            fprintf(log_file,copy_msg,file_num);
     }
-    // Maybe check for the pipe errors here
+    else {
+        String filename=string_create(10);
+        if (filename==NULL) {
+            string_free(error_str);
+            return -1;
+        }
+        char ch;
+        while (1) {
+            read(rec->pipes[0],&ch,sizeof(ch));
+            if (ch=='\0')
+                break;
+            if (string_push(filename,ch)==-1) {
+                string_free(error_str);
+                string_free(filename);
+                return -1;
+            }
+        }
+        if (two_args)
+            fprintf(log_file,copy_msg,string_ptr(filename),string_ptr(error_str));
+        else
+            fprintf(log_file,copy_msg,string_ptr(filename));
+        string_free(error_str);
+        string_free(filename);
+    }
+    // We don't check for error messages if op == FULL
+    // Must also update rec
     close(rec->pipes[0]);
     close(rec->pipes[1]);
+    return 0;
 }
 
 int handle_cmd(String argv);
