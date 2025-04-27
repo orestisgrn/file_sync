@@ -11,10 +11,10 @@
 
 #define BUFFSIZE 100
 
-void full_sync(char *source,char *target);
-void add_file(char *source,char *target,char *file);        // warning: write report doesn't write the file name in the end
-void modify_file(char *source,char *target,char *file);
-void deleted_file(char *source,char *target,char *file);
+int full_sync(char *source,char *target);
+int add_file(char *source,char *target,char *file);        // warning: write report doesn't write the file name in the end
+int modify_file(char *source,char *target,char *file);
+int deleted_file(char *source,char *target,char *file);
 
 String build_path(char *source,char *target);
 void write_report(int op, char **err, int buffer_count, int file_num, int success_num);
@@ -23,25 +23,20 @@ int copy_file(String input, String output);
 
 int main(int argc,char **argv) {            // maybe change return values
     if (!strcmp(argv[3],"ALL")) {
-        full_sync(argv[1],argv[2]);
-        return 0;
+        return full_sync(argv[1],argv[2]);
     }
     char op = argv[4][0] - '0';     // assumes operation codes are single digit numbers
     switch (op) {
         case ADDED:
-            add_file(argv[1],argv[2],argv[3]);
-            break;
+            return add_file(argv[1],argv[2],argv[3]);
         case MODIFIED:
-            modify_file(argv[1],argv[2],argv[3]);
-            break;
+            return modify_file(argv[1],argv[2],argv[3]);
         case DELETED:
-            deleted_file(argv[1],argv[2],argv[3]);
-            break;
+            return deleted_file(argv[1],argv[2],argv[3]);
     }
-    return 0;
 }
 
-void full_sync(char *source,char *target) {
+int full_sync(char *source,char *target) {
     DIR *dir_ptr;
     int buffer_size=50;
     char **buffer = malloc(buffer_size*sizeof(char*));
@@ -51,13 +46,13 @@ void full_sync(char *source,char *target) {
     if (buffer==NULL) {
         char *err = strerror(errno);
         write_report(FULL,&err,1,-1,0);         // -1 on file_num means error (to not think zero files, zero copy)
-        return;
+        return -1;
     }
     if ((dir_ptr=opendir(source))==NULL) {
         char *err = strerror(errno);
         write_report(FULL,&err,1,-1,0);
         free(buffer);
-        return;
+        return -1;
     }
     struct dirent *direntp;
     errno = 0;
@@ -94,14 +89,15 @@ void full_sync(char *source,char *target) {
     write_report(FULL,buffer,buffer_count,file_num,success_num);
     free(buffer);
     closedir(dir_ptr);
+    return 0;
 }
 
-void add_file(char *source,char *target,char *file) {
+int add_file(char *source,char *target,char *file) {
     String new_file_path = build_path(target,file);
     if (new_file_path==NULL) {
         char *err = strerror(errno);
         write_report(ADDED,&err,1,1,0);
-        return;
+        return -1;
     }
     if (open(string_ptr(new_file_path),O_WRONLY | O_CREAT | O_TRUNC,0644)==-1) {
         char *err = strerror(errno);
@@ -111,14 +107,55 @@ void add_file(char *source,char *target,char *file) {
         write_report(ADDED,NULL,0,1,1);
     }
     write(STDOUT_FILENO,file,strlen(file)+1);
+    string_free(new_file_path);
+    return 0;
 }
 
-void modify_file(char *source,char *target,char *file) {
-
+int modify_file(char *source,char *target,char *file) {
+    String source_path = build_path(source,file);
+    if (source_path==NULL) {
+        char *err = strerror(errno);
+        write_report(MODIFIED,&err,1,1,0);
+        return -1;
+    }
+    String target_path = build_path(target,file);
+    if (target_path==NULL) {
+        char *err = strerror(errno);
+        write_report(MODIFIED,&err,1,1,0);
+        string_free(source_path);
+        return -1;
+    }
+    int cp_code;
+    if ((cp_code=copy_file(source_path,target_path))!=0) {
+        char *err = strerror(cp_code);
+        write_report(MODIFIED,&err,1,1,0);
+    }
+    else {
+        write_report(MODIFIED,NULL,0,1,1);
+    }
+    write(STDOUT_FILENO,file,strlen(file)+1);
+    string_free(source_path);
+    string_free(target_path);
+    return 0;
 }
 
-void deleted_file(char *source,char *target,char *file) {
-
+int deleted_file(char *source,char *target,char *file) {
+    String target_path = build_path(target,file);
+    if (target_path==NULL) {
+        char *err = strerror(errno);
+        write_report(DELETED,&err,1,1,0);
+        return -1;
+    }
+    if (unlink(string_ptr(target_path))==-1) {
+        char *err = strerror(errno);
+        write_report(DELETED,&err,1,1,0);
+    }
+    else {
+        write_report(DELETED,NULL,0,1,1);
+    }
+    write(STDOUT_FILENO,file,strlen(file)+1);
+    string_free(target_path);
+    return 0;
 }
 
 void write_report(int op, char **err, int buffer_count, int file_num, int success_num) {

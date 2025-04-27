@@ -203,6 +203,8 @@ int main(int argc,char **argv) {
             int num_read = read(inotify_fd,event_buf,INOTIFY_BUF);
             for (char *p=event_buf;p<event_buf+num_read; ) {
                 struct inotify_event *event = (struct inotify_event *) p;
+                if (event->mask & IN_ISDIR)
+                    continue;
                 struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,event->wd);
                 struct work_rec work_rec;
                 work_rec.rec = rec;
@@ -214,13 +216,13 @@ int main(int argc,char **argv) {
                     CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
                 }
                 printf("mask = ");//
-                struct inotify_event *i = event;//
-                if (i->mask & IN_CREATE) { printf("IN_CREATE "); work_rec.op = ADDED; }//
-                if (i->mask & IN_DELETE) { printf("IN_DELETE "); work_rec.op = DELETED; }//
-                if (i->mask & IN_MODIFY) { printf("IN_MODIFY "); work_rec.op = MODIFIED; }//
+                if (event->mask & IN_CREATE) { printf("IN_CREATE "); work_rec.op = ADDED; }//
+                if (event->mask & IN_DELETE) { printf("IN_DELETE "); work_rec.op = DELETED; }//
+                if (event->mask & IN_MODIFY) { printf("IN_MODIFY "); work_rec.op = MODIFIED; }//
                 printf("%ld\n",time(NULL));//
                 printf("%s %s\n",string_ptr(rec->source_dir),event->name);//
                 int spawn_code;
+                // Maybe update with collect_workers here
                 if ((spawn_code=spawn_worker(&work_rec))!=0)
                     CLEAN_AND_EXIT( ,spawn_code);
                 p += sizeof(struct inotify_event) + event->len;

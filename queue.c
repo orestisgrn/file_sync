@@ -52,6 +52,8 @@ struct work_rec *queue_pop(Queue q) {
         return NULL;
     struct node *pop_node = q->fst;
     q->fst = q->fst->next;
+    if (q->fst==NULL)
+        q->last = NULL;
     struct work_rec *work_rec = pop_node->work_rec;
     free(pop_node);
     return work_rec;
