@@ -21,12 +21,10 @@ void write_report(int op, char **err, int buffer_count, int file_num, int succes
 void store_to_buffer(int err,char ***buffer, int *buffer_count, int *buffer_size);
 int copy_file(String input, String output);
 
-int main(int argc,char **argv) {
-    int watch_desc;
-    read(STDIN_FILENO,&watch_desc,sizeof(int));  // warning: change type if struct rec changes
+int main(int argc,char **argv) {            // maybe change return values
     if (!strcmp(argv[3],"ALL")) {
         full_sync(argv[1],argv[2]);
-        return watch_desc;
+        return 0;
     }
     char op = argv[4][0] - '0';     // assumes operation codes are single digit numbers
     switch (op) {
@@ -40,7 +38,7 @@ int main(int argc,char **argv) {
             deleted_file(argv[1],argv[2],argv[3]);
             break;
     }
-    return watch_desc;
+    return 0;
 }
 
 void full_sync(char *source,char *target) {

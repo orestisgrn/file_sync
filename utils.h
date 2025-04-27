@@ -40,12 +40,17 @@ struct sync_info_rec {
     time_t last_sync_time;
     int error_count;
     int watch_desc;
-    int pipes[2];
 };
 
 #define CLEAN_AND_EXIT(PRINT_CMD,RETURN_CODE) { \
     sync_info_lookup_free(sync_info_mem_store); \
     free(worker_queue); \
+    for(int i=0;i<cur_workers;i++) { \
+        close(worker_table[i]->pipes[0]); \
+        close(worker_table[i]->pipes[1]); \
+        free(worker_table[i]); \
+    } \
+    free(worker_table); \
     if (config_file != NULL) fclose(config_file); \
     if (log_file != NULL) fclose(log_file); \
     if (fss_in_fd!=-1) close(fss_in_fd); \

@@ -31,6 +31,14 @@ sigset_t sigchld;
 Sync_Info_Lookup sync_info_mem_store;
 Queue worker_queue;
 
+struct worker_table_rec {
+    struct sync_info_rec *rec;
+    int pipes[2];
+    pid_t pid;
+};
+
+struct worker_table_rec **worker_table;
+
 FILE *log_file;
 
 String create_all_string(void);
@@ -43,7 +51,7 @@ int fss_out_fd=-1;
 
 int read_config(FILE *config_file, int inotify_fd);
 int spawn_worker(struct work_rec *work_rec);
-int handle_worker_term(struct sync_info_rec *rec, pid_t pid);
+int handle_worker_term(struct worker_table_rec *worker);
 int process_command(String cmd);
 int collect_workers(void);
 int cleanup_workers(void);
@@ -115,6 +123,10 @@ int main(int argc,char **argv) {
     }
     sync_info_mem_store = sync_info_lookup_create(200);
     if (sync_info_mem_store==NULL) {
+        CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+    }
+    worker_table = calloc(worker_limit,sizeof(struct worker_table_rec*));
+    if (worker_table==NULL) {
         CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
     }
     worker_queue = queue_create();
@@ -347,10 +359,14 @@ int collect_workers(void) {
     while ((pid=waitpid(-1,&status,WNOHANG))>0) {
         read(signal_fd,&siginfo,sizeof(siginfo));
         struct work_rec *work_rec;
-        cur_workers--;
-        struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
-        if (handle_worker_term(rec,pid)==-1)
+        int i;
+        for (i=0;worker_table[i]->pid!=pid;i++);
+        if (handle_worker_term(worker_table[i])==-1)
             return ALLOC_ERR;
+        cur_workers--;
+        free(worker_table[i]);
+        worker_table[i] = worker_table[cur_workers];
+        worker_table[cur_workers] = NULL;
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
@@ -371,10 +387,14 @@ int cleanup_workers(void) {
     pid_t pid;
     while((pid=wait(&status))!=-1) {
         struct work_rec *work_rec;
-        cur_workers--;
-        struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,WEXITSTATUS(status));
-        if (handle_worker_term(rec,pid)==-1)
+        int i;
+        for (i=0;worker_table[i]->pid!=pid;i++);
+        if (handle_worker_term(worker_table[i])==-1)
             return ALLOC_ERR;
+        cur_workers--;
+        free(worker_table[i]);
+        worker_table[i] = worker_table[cur_workers];
+        worker_table[cur_workers] = NULL;
         if ((work_rec=queue_pop(worker_queue))!=NULL) {
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
@@ -397,8 +417,12 @@ int spawn_worker(struct work_rec *work_rec) {
         }
     }
     else {
+        worker_table[cur_workers] = malloc(sizeof(struct worker_table_rec));
+        if (worker_table[cur_workers]==NULL) {
+            return ALLOC_ERR;
+        }
         cur_workers++;
-        if (pipe(work_rec->rec->pipes)==-1) {
+        if (pipe(worker_table[cur_workers-1]->pipes)==-1) {
             perror("Pipe couldn't be created\n");
             return PIPE_ERR;
         }
@@ -408,34 +432,36 @@ int spawn_worker(struct work_rec *work_rec) {
             return FORK_ERR;
         }
         else if (pid==0) {
-            dup2(work_rec->rec->pipes[0],STDIN_FILENO);
-            dup2(work_rec->rec->pipes[1],STDOUT_FILENO);
-            write(STDOUT_FILENO,&work_rec->rec->watch_desc,sizeof(int));  // warning: change types if struct changes
+            dup2(worker_table[cur_workers-1]->pipes[0],STDIN_FILENO);//
+            dup2(worker_table[cur_workers-1]->pipes[1],STDOUT_FILENO);
             char op_str[2] = { work_rec->op+'0','\0' };
             execl("./worker","worker",string_ptr(work_rec->rec->source_dir),
                     string_ptr(work_rec->rec->target_dir),string_ptr(work_rec->filename),op_str,NULL);
             perror("Worker binary couldn't be executed\n");
             return EXEC_ERR;
         }
+        worker_table[cur_workers-1]->pid = pid;
+        worker_table[cur_workers-1]->rec = work_rec->rec;
         string_free(work_rec->filename);
     }
     return 0;
 }
 
-int handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
+int handle_worker_term(struct worker_table_rec *worker) {
+    struct sync_info_rec *rec = worker->rec;
     rec->last_sync_time = time(NULL);       // Only full sync for now
     int op,file_num,success_num,buffer_count;
-    read(rec->pipes[0],&op,sizeof(op));
-    read(rec->pipes[0],&file_num,sizeof(file_num));             // -1 means error
-    read(rec->pipes[0],&success_num,sizeof(success_num));
-    read(rec->pipes[0],&buffer_count,sizeof(buffer_count));
+    read(worker->pipes[0],&op,sizeof(op));
+    read(worker->pipes[0],&file_num,sizeof(file_num));             // -1 means error
+    read(worker->pipes[0],&success_num,sizeof(success_num));
+    read(worker->pipes[0],&buffer_count,sizeof(buffer_count));
     char time_str[30];
     strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
     char *result;
     char *copy_msg;
     int two_args=0;
     fprintf(log_file,"[%s] [%s] [%s] [%d] [%s]\n",time_str,string_ptr(rec->source_dir),
-                                                string_ptr(rec->target_dir),pid,op_strings[op]);
+                                                string_ptr(rec->target_dir),worker->pid,op_strings[op]);
     String error_str=NULL;
     if (success_num==file_num) {
         result="SUCCESS";
@@ -455,7 +481,7 @@ int handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
                 return -1;
             char ch;
             while (1) {
-                read(rec->pipes[0],&ch,sizeof(ch));
+                read(worker->pipes[0],&ch,sizeof(ch));
                 if (ch=='\n')
                     break;
                 if (string_push(error_str,ch)==-1) {
@@ -486,7 +512,7 @@ int handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
         }
         char ch;
         while (1) {
-            read(rec->pipes[0],&ch,sizeof(ch));
+            read(worker->pipes[0],&ch,sizeof(ch));
             if (ch=='\0')
                 break;
             if (string_push(filename,ch)==-1) {
@@ -504,8 +530,8 @@ int handle_worker_term(struct sync_info_rec *rec, pid_t pid) {
     }
     // We don't check for error messages if op == FULL
     // Must also update rec
-    close(rec->pipes[0]);
-    close(rec->pipes[1]);
+    close(worker->pipes[0]);
+    close(worker->pipes[1]);
     return 0;
 }
 
