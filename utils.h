@@ -30,17 +30,21 @@ enum cmd_codes {
     STATUS,
     SYNC,
     INVALID,
+    INVALID_TARGET,
+    ARCHIVED,
     NOT_ARCHIVED,
+    NOT_WATCHED,
 };
 
 struct sync_info_rec {
     String source_dir;
     String target_dir;
-    int status;
     time_t last_sync_time;
     int error_count;
     int watch_desc;
 };
+
+          // think about closing inotify_fd
 
 #define CLEAN_AND_EXIT(PRINT_CMD,RETURN_CODE) { \
     sync_info_lookup_free(sync_info_mem_store); \

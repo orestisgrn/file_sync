@@ -49,7 +49,9 @@ char *fss_out = FSS_OUT;
 int fss_in_fd=-1;
 int fss_out_fd=-1;
 
-int read_config(FILE *config_file, int inotify_fd);
+int inotify_fd=-1;
+
+int read_config(FILE *config_file);
 int spawn_worker(struct work_rec *work_rec);
 int handle_worker_term(struct worker_table_rec *worker);
 int process_command(String cmd);
@@ -117,7 +119,6 @@ int main(int argc,char **argv) {
     if (opt != '\0') {
         CLEAN_AND_EXIT(perror("Option without argument\n"),ARGS_ERR);
     }
-    int inotify_fd;
     if ((inotify_fd = inotify_init()) == -1) {
         CLEAN_AND_EXIT(perror("Inotify initialization error\n"),INOTIFY_ERR);
     }
@@ -138,7 +139,7 @@ int main(int argc,char **argv) {
             CLEAN_AND_EXIT(perror("Config file couldn't open\n"),FOPEN_ERR);
         }
         int code;
-        if ((code=read_config(config_file,inotify_fd))!=0) {
+        if ((code=read_config(config_file))!=0) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
@@ -201,11 +202,18 @@ int main(int argc,char **argv) {
         if (waiting_fds[INOTIFY_FD].revents!=0) {
             static char event_buf[INOTIFY_BUF];         // WARNING!!! : May read MORE than one event
             int num_read = read(inotify_fd,event_buf,INOTIFY_BUF);
-            for (char *p=event_buf;p<event_buf+num_read; ) {
+            for (char *p=event_buf;p<event_buf+num_read; ) {    // WARNING!!! : += not used here
                 struct inotify_event *event = (struct inotify_event *) p;
-                if (event->mask & IN_ISDIR)
+                if (event->mask & IN_ISDIR) {                   // IN_INGORE event when rm-ing a watch
+                    p += sizeof(struct inotify_event) + event->len;
                     continue;
+                }
                 struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,event->wd);
+                if (rec==NULL) {
+                    printf("Why are you here?\n");//
+                    p += sizeof(struct inotify_event) + event->len;
+                    continue;
+                }
                 struct work_rec work_rec;
                 work_rec.rec = rec;
                 work_rec.filename = string_create(15);
@@ -243,7 +251,7 @@ int skip_white(FILE *file) {
     return ch;
 }
 
-int read_config(FILE *config_file, int inotify_fd) {
+int read_config(FILE *config_file) {
     int ch;
     String source,target;
     do {
@@ -542,6 +550,8 @@ int handle_cmd(String argv);
 int process_command(String cmd) {           // Command ends in \n
     const char *cmd_ptr = string_ptr(cmd);
     String argv = string_create(15);
+    struct sync_info_rec *rec;
+    char *real_source;
     int argc=0;
     char cmd_code;
     if (argv==NULL) {
@@ -563,6 +573,7 @@ int process_command(String cmd) {           // Command ends in \n
                     return cmd_code;
                 }
                 write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                argc++;
             }
             else if (argc==1) {
                 DIR *source_dir;
@@ -574,12 +585,38 @@ int process_command(String cmd) {           // Command ends in \n
                     return 0;
                 }
                 closedir(source_dir);
-                char *real_source=realpath(string_ptr(argv),NULL);
+                real_source=realpath(string_ptr(argv),NULL);
                 if (cmd_code==CANCEL) {
+                    rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    if (rec==NULL) {
+                        char not_archived=NOT_ARCHIVED;
+                        write(fss_out_fd,&not_archived,sizeof(not_archived));
+                        string_free(argv);
+                        free(real_source);
+                        return 0;
+                    }
+                    if (rec->watch_desc==-1) {
+                        char not_watched=NOT_WATCHED;
+                        write(fss_out_fd,&not_watched,sizeof(not_watched));
+                        string_free(argv);
+                        free(real_source);
+                        return 0;
+                    }
+                    printf("%d\n",inotify_rm_watch(inotify_fd,rec->watch_desc));
+                    sync_info_watchdesc_delete(sync_info_mem_store,rec->watch_desc);
+                    rec->watch_desc=-1;
+                    char time_str[30];
+                    time_t t = time(NULL);
+                    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    printf("[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
+                    fprintf(log_file,"[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                    argc++;
+                    free(real_source);
+                    break;
                 }
                 else if (cmd_code==STATUS) {
-                    struct sync_info_rec *rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    rec = sync_info_path_search(sync_info_mem_store,real_source);
                     if (rec==NULL) {
                         char not_archived=NOT_ARCHIVED;
                         write(fss_out_fd,&not_archived,sizeof(not_archived));
@@ -600,18 +637,52 @@ int process_command(String cmd) {           // Command ends in \n
                     printf("Target: %s\n",string_ptr(rec->target_dir));
                     printf("Last Sync: %s\n",time_str);
                     printf("Errors: %d\n",rec->error_count);
-                    printf("Status: %s\n",rec->status==ACTIVE ? "Active" : "Inactive");
+                    printf("Status: %s\n",rec->watch_desc!=-1 ? "Active" : "Inactive");
                     write(fss_out_fd,&cmd_code,sizeof(cmd_code));       // Also send to console
+                    argc++;
+                    free(real_source);
+                    break;
                 }
                 else if (cmd_code==SYNC) {
+                    rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    if (rec==NULL) {
+                        char not_archived=NOT_ARCHIVED;
+                        write(fss_out_fd,&not_archived,sizeof(not_archived));
+                        string_free(argv);
+                        free(real_source);
+                        return 0;
+                    }
                     write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                    argc++;
+                    free(real_source);
+                    break;
                 }
-                else {
-                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                else if (cmd_code==ADD) {
+                    argc++;
+                    rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    if (rec!=NULL) {
+                        time_t t = time(NULL);
+                        char cur_time_str[30];
+                        strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                        printf("[%s] Already in queue: %s\n",cur_time_str,real_source);
+                        char archived = ARCHIVED;
+                        write(fss_out_fd,&archived,sizeof(archived));
+                        free(real_source);
+                        break;
+                    }
                 }
-                free(real_source);
             }
             else {
+                DIR *target_dir;
+                if ((target_dir=opendir(string_ptr(argv)))==NULL) {
+                    printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(argv));//?
+                    char invalid=INVALID_TARGET;
+                    write(fss_out_fd,&invalid,sizeof(invalid));
+                    string_free(argv);
+                    free(real_source);
+                    return 0;
+                }
+                closedir(target_dir);
 
             }
             string_free(argv);
@@ -619,7 +690,6 @@ int process_command(String cmd) {           // Command ends in \n
             if (argv==NULL) {
                 return -1;
             }
-            argc++;
         }
         if (*(++cmd_ptr)=='\0')
             break;

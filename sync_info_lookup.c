@@ -65,9 +65,9 @@ struct sync_info_rec *sync_info_watchdesc_search(Sync_Info_Lookup ltable,int key
     return hashtable_watchdesc_search(ltable->wd_lookup,key);
 }
 
-//void sync_info_delete(Sync_Info_Lookup ltable,const char *key) {
-//    hashtable_watchdesc_delete(ltable->wd_lookup,)
-//}
+void sync_info_watchdesc_delete(Sync_Info_Lookup ltable,int key) {
+    hashtable_watchdesc_delete(ltable->wd_lookup,key);
+}
 
 void sync_info_lookup_free(Sync_Info_Lookup ltable) {
     if (ltable!=NULL) {

@@ -95,13 +95,22 @@ int main(int argc, char **argv) {
                 close(fss_out_fd);
                 break;
             }
-            else {
+            else {                                  // Continue from here
                 read(fss_out_fd,&ch,sizeof(ch));
                 if (ch==INVALID) {
                     printf("Source path doesn't exist.\n");
                 }
+                else if (ch==INVALID_TARGET) {
+                    printf("Target path doesn't exist.\n");
+                }
                 else if (ch==NOT_ARCHIVED) {
                     printf("Source path is not archived.\n");
+                }
+                else if (ch==NOT_WATCHED) {
+                    printf("Source path is not watched.\n");
+                }
+                else if (ch==ARCHIVED) {
+                    printf("Source path is already archived.\n");
                 }
             }
             close(fss_out_fd);
