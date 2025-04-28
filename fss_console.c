@@ -78,7 +78,7 @@ int main(int argc, char **argv) {
             }
             char return_code;
             read(fss_out_fd,&return_code,sizeof(return_code));
-            if (return_code==INVALID) {
+            if (return_code==NO_COMMAND) {
                 printf("Invalid command: ");
                 char ch;
                 while (1) {
@@ -97,7 +97,7 @@ int main(int argc, char **argv) {
             }
             else {                                  // Continue from here
                 read(fss_out_fd,&ch,sizeof(ch));
-                if (ch==INVALID) {
+                if (ch==INVALID_SOURCE) {
                     printf("Source path doesn't exist.\n");
                 }
                 else if (ch==INVALID_TARGET) {

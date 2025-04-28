@@ -24,12 +24,13 @@ enum status_codes {
 };
 
 enum cmd_codes {
+    NO_COMMAND,
     SHUTDOWN,
     ADD,
     CANCEL,
     STATUS,
     SYNC,
-    INVALID,
+    INVALID_SOURCE,
     INVALID_TARGET,
     ARCHIVED,
     NOT_ARCHIVED,

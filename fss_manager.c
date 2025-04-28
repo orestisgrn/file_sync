@@ -54,7 +54,7 @@ int inotify_fd=-1;
 int read_config(FILE *config_file);
 int spawn_worker(struct work_rec *work_rec);
 int handle_worker_term(struct worker_table_rec *worker);
-int process_command(String cmd);
+int process_command(String cmd,char *cmd_code);
 int collect_workers(void);
 int cleanup_workers(void);
 
@@ -180,20 +180,21 @@ int main(int argc,char **argv) {
                         break;
                     read(fss_in_fd,&ch,sizeof(ch));
                 }
-                int cmd_code;
                 fss_out_fd=open(fss_out,O_WRONLY);
                 if (fss_out_fd==-1) {
                     string_free(cmd);
                     CLEAN_AND_EXIT(perror("fss_out couldn't open\n"),FIFO_ERR);
                 }
-                if ((cmd_code=process_command(cmd))==-1) {
-                    string_free(cmd);
+                char cmd_code;
+                int err_code;
+                if ((err_code=process_command(cmd,&cmd_code))!=0) {
                     close(fss_out_fd);
-                    CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
+                    CLEAN_AND_EXIT({fprintf(stderr,"Error while executing command: %s\n",string_ptr(cmd));
+                                    string_free(cmd);},err_code);
                 }
                 string_free(cmd);
                 close(fss_out_fd);
-                if (cmd_code=='s') {
+                if (cmd_code==SHUTDOWN) {
                     break;
                 }
             }
@@ -302,6 +303,8 @@ int read_config(FILE *config_file) {
         closedir(source_dir);
         char *real_source=realpath(string_ptr(source),NULL);
         string_free(source);
+        if (real_source==NULL)
+            return ALLOC_ERR;
         if ((source=string_create(10))==NULL)   // Maybe put length to create arg
             return ALLOC_ERR;
         if (string_cpy(source,real_source)==-1)
@@ -335,11 +338,8 @@ int read_config(FILE *config_file) {
         int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
         printf("%d\n",watch_desc);
         work_rec.rec->watch_desc = watch_desc;
-        if (sync_info_index_watchdesc(sync_info_mem_store,work_rec.rec,&insert_code)==NULL) {
-            string_free(source);
-            string_free(target);
+        if (sync_info_index_watchdesc(sync_info_mem_store,work_rec.rec,&insert_code)==NULL)
             return ALLOC_ERR;
-        }
         work_rec.filename = create_all_string();
         if (work_rec.filename==NULL)
             return ALLOC_ERR;
@@ -547,57 +547,61 @@ int handle_worker_term(struct worker_table_rec *worker) {
 
 int handle_cmd(String argv);
 
-int process_command(String cmd) {           // Command ends in \n
+int process_command(String cmd,char *cmd_code) {           // Command ends in \n
+    *cmd_code = NO_COMMAND;
     const char *cmd_ptr = string_ptr(cmd);
     String argv = string_create(15);
     struct sync_info_rec *rec;
     char *real_source;
     int argc=0;
-    char cmd_code;
     if (argv==NULL) {
-        return -1;
+        return ALLOC_ERR;
     }
     while (1) {
         while (!isspace(*cmd_ptr)) {
             if (string_push(argv,*cmd_ptr)==-1) {
                 string_free(argv);
-                return -1;
+                return ALLOC_ERR;
             }
             cmd_ptr++;
         }
         if (string_length(argv)!=0) {
             if (argc==0) {
-                cmd_code=handle_cmd(argv);
-                if (cmd_code==SHUTDOWN || cmd_code==INVALID) {
+                *cmd_code=handle_cmd(argv);
+                if (*cmd_code==SHUTDOWN || *cmd_code==NO_COMMAND) {
                     string_free(argv);
-                    return cmd_code;
+                    return 0;
                 }
-                write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                 argc++;
             }
             else if (argc==1) {
                 DIR *source_dir;
                 if ((source_dir=opendir(string_ptr(argv)))==NULL) {
                     printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(argv));//?
-                    char invalid=INVALID;
-                    write(fss_out_fd,&invalid,sizeof(invalid));
+                    *cmd_code = INVALID_SOURCE;         // Think about only writing this to fss_out,
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));  // not return in *cmd_code
                     string_free(argv);
                     return 0;
                 }
                 closedir(source_dir);
                 real_source=realpath(string_ptr(argv),NULL);
-                if (cmd_code==CANCEL) {
+                if (real_source==NULL) {
+                    string_free(argv);
+                    return ALLOC_ERR;
+                }
+                if (*cmd_code==CANCEL) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
                     if (rec==NULL) {
-                        char not_archived=NOT_ARCHIVED;
-                        write(fss_out_fd,&not_archived,sizeof(not_archived));
+                        *cmd_code = NOT_ARCHIVED;
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         free(real_source);
                         return 0;
                     }
                     if (rec->watch_desc==-1) {
-                        char not_watched=NOT_WATCHED;
-                        write(fss_out_fd,&not_watched,sizeof(not_watched));
+                        *cmd_code = NOT_WATCHED;
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         free(real_source);
                         return 0;
@@ -610,16 +614,16 @@ int process_command(String cmd) {           // Command ends in \n
                     strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     printf("[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     fprintf(log_file,"[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
-                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                     argc++;
                     free(real_source);
                     break;
                 }
-                else if (cmd_code==STATUS) {
+                else if (*cmd_code==STATUS) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
                     if (rec==NULL) {
-                        char not_archived=NOT_ARCHIVED;
-                        write(fss_out_fd,&not_archived,sizeof(not_archived));
+                        *cmd_code = NOT_ARCHIVED;
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         free(real_source);
                         return 0;
@@ -638,26 +642,26 @@ int process_command(String cmd) {           // Command ends in \n
                     printf("Last Sync: %s\n",time_str);
                     printf("Errors: %d\n",rec->error_count);
                     printf("Status: %s\n",rec->watch_desc!=-1 ? "Active" : "Inactive");
-                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));       // Also send to console
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));       // Also send to console
                     argc++;
                     free(real_source);
                     break;
                 }
-                else if (cmd_code==SYNC) {
+                else if (*cmd_code==SYNC) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
                     if (rec==NULL) {
-                        char not_archived=NOT_ARCHIVED;
-                        write(fss_out_fd,&not_archived,sizeof(not_archived));
+                        *cmd_code = NOT_ARCHIVED;
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         free(real_source);
                         return 0;
                     }
-                    write(fss_out_fd,&cmd_code,sizeof(cmd_code));
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                     argc++;
                     free(real_source);
                     break;
                 }
-                else if (cmd_code==ADD) {
+                else if (*cmd_code==ADD) {
                     argc++;
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
                     if (rec!=NULL) {
@@ -665,8 +669,8 @@ int process_command(String cmd) {           // Command ends in \n
                         char cur_time_str[30];
                         strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                         printf("[%s] Already in queue: %s\n",cur_time_str,real_source);
-                        char archived = ARCHIVED;
-                        write(fss_out_fd,&archived,sizeof(archived));
+                        *cmd_code = ARCHIVED;
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         free(real_source);
                         break;
                     }
@@ -676,19 +680,63 @@ int process_command(String cmd) {           // Command ends in \n
                 DIR *target_dir;
                 if ((target_dir=opendir(string_ptr(argv)))==NULL) {
                     printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(argv));//?
-                    char invalid=INVALID_TARGET;
-                    write(fss_out_fd,&invalid,sizeof(invalid));
+                    *cmd_code = INVALID_TARGET;
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                     string_free(argv);
                     free(real_source);
                     return 0;
                 }
                 closedir(target_dir);
-
+                int insert_code;                    // Maybe make this section a function
+                struct work_rec work_rec;
+                String source = string_create(15);
+                if (source==NULL) {
+                    string_free(argv);
+                    free(real_source);
+                    return ALLOC_ERR;
+                }
+                if (string_cpy(source,real_source)==-1) {
+                    string_free(argv);
+                    string_free(source);
+                    free(real_source);
+                    return ALLOC_ERR;
+                }
+                free(real_source);
+                work_rec.rec = sync_info_insert(sync_info_mem_store,source,argv,&insert_code);
+                if (insert_code==FAILED) {
+                    string_free(source);
+                    string_free(argv);
+                    return ALLOC_ERR;
+                }
+                int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
+                printf("%d\n",watch_desc);
+                work_rec.rec->watch_desc = watch_desc;
+                if (sync_info_index_watchdesc(sync_info_mem_store,work_rec.rec,&insert_code)==NULL)
+                    return ALLOC_ERR;
+                work_rec.filename = create_all_string();
+                if (work_rec.filename==NULL)
+                    return ALLOC_ERR;
+                int collect_code;
+                if ((collect_code=collect_workers())!=0)
+                    return collect_code;
+                int spawn_code;
+                work_rec.op = FULL;
+                if ((spawn_code=spawn_worker(&work_rec))!=0)
+                    return spawn_code;
+                char time_str[30];
+                time_t t = time(NULL);
+                strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                printf("[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
+                printf("[%s] Monitoring started for %s\n",time_str,string_ptr(source));// target is not normalized
+                fprintf(log_file,"[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
+                fprintf(log_file,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
+                write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                return 0;
             }
             string_free(argv);
             argv = string_create(15);
             if (argv==NULL) {
-                return -1;
+                return ALLOC_ERR;
             }
         }
         if (*(++cmd_ptr)=='\0')
@@ -696,8 +744,13 @@ int process_command(String cmd) {           // Command ends in \n
     }
     string_free(argv);
     if (argc==1) {
-        char invalid=INVALID;
-        write(fss_out_fd,&invalid,sizeof(invalid));
+        *cmd_code = INVALID_SOURCE;
+        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+    }
+    if (argc==2 && *cmd_code==ADD) {
+        *cmd_code = INVALID_TARGET;
+        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+        free(real_source);
     }
     return 0;
 }
@@ -722,11 +775,11 @@ int handle_cmd(String argv) {
         return SYNC;
     }
     else {
-        ch = INVALID;
+        ch = NO_COMMAND;
         printf("%s\n",string_ptr(argv));
         write(fss_out_fd,&ch,sizeof(ch));
         write(fss_out_fd,string_ptr(argv),string_length(argv)+1);
-        return INVALID;
+        return ch;
     }
 }
 
