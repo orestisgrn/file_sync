@@ -13,6 +13,7 @@ char *fss_out = FSS_OUT;
 int main(int argc, char **argv) {
     char opt='\0';
     char *logname=NULL;
+    FILE *log_file=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -36,13 +37,19 @@ int main(int argc, char **argv) {
         perror("No logfile given\n");
         return ARGS_ERR;
     }
+    if ((log_file=fopen(logname,"a"))==NULL) {
+        perror("Logfile couldn't open\n");
+        return FOPEN_ERR;
+    }
     if (opt != '\0') {
         perror("Option without argument\n");
+        fclose(log_file);
         return ARGS_ERR;
     }
     int fss_in_fd,fss_out_fd;
     if ((fss_in_fd=open(fss_in,O_WRONLY | O_NONBLOCK))==-1) {
         printf("The manager isn't running\n");
+        fclose(log_file);
         return -1;
     }
     while(1) {      // Main console loop            // Idea:redirect STDIN to fss_in (think a bit, huh?)
@@ -50,6 +57,7 @@ int main(int argc, char **argv) {
         String cmd = string_create(15);
         if (cmd==NULL) {
             perror("Memory allocation error");
+            fclose(log_file);
             return ALLOC_ERR;
         }
         int wrote_char=0;
@@ -60,6 +68,7 @@ int main(int argc, char **argv) {
                 printf("EOF: terminating console...\n");
                 string_free(cmd);
                 close(fss_in_fd);
+                fclose(log_file);
                 return -2;
             }
             if (!isspace(ch))
@@ -67,6 +76,7 @@ int main(int argc, char **argv) {
             if (string_push(cmd,ch)==-1) {
                 string_free(cmd);
                 perror("Memory allocation error");
+                fclose(log_file);
                 return ALLOC_ERR;
             }
         } while (ch!='\n');
@@ -74,6 +84,7 @@ int main(int argc, char **argv) {
             write(fss_in_fd,string_ptr(cmd),string_length(cmd));
             if ((fss_out_fd=open(fss_out,O_RDONLY))==-1) {
                 perror("fss_out couldn't open\n");
+                fclose(log_file);
                 return FIFO_ERR;
             }
             char return_code;
@@ -92,7 +103,8 @@ int main(int argc, char **argv) {
             else if (return_code==SHUTDOWN) {
                 printf("Shutting down...\n");
                 string_free(cmd);
-                close(fss_out_fd);
+                fclose(log_file);
+                //close(fss_out_fd);
                 break;
             }
             else {                                  // Continue from here

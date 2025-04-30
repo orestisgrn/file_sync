@@ -51,7 +51,8 @@ int fss_out_fd=-1;
 
 int inotify_fd=-1;
 
-int pending_sync_wd = -1; 
+enum pending_sync_wd_fields { EXISTS, WD_VALUE};
+int pending_sync_wd[2] = { 0 , -1 };
 
 int read_config(FILE *config_file);
 int spawn_worker(struct work_rec *work_rec);
@@ -68,7 +69,6 @@ int main(int argc,char **argv) {
         CLEAN_AND_EXIT(perror("Fifos couldn't be created\n"),FIFO_ERR);
     }
     fss_in_fd = open(fss_in,O_RDONLY | O_NONBLOCK);
-    //fss_out_fd  = open(fss_out,O_WRONLY);
     if (fss_in_fd==-1) {
         CLEAN_AND_EXIT(perror("Fifo couldn't open\n"),FIFO_ERR);
     }
@@ -242,10 +242,19 @@ int main(int argc,char **argv) {
             waiting_fds[INOTIFY_FD].revents=0;
         }
     }
+    time_t t = time(NULL);
+    char cur_time_str[30];
+    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+    printf("[%s] Shutting down manager...\n",cur_time_str);
+    printf("[%s] Waiting for all active workers to finish.\n",cur_time_str);
+    printf("[%s] Processing remaining queued tasks.\n",cur_time_str);
+    // Standard message, no matter if queued or active workers exist
     int cleanup_code;
     if ((cleanup_code=cleanup_workers())!=0)
         CLEAN_AND_EXIT( ,cleanup_code);
-    //printf("%d\n",cur_workers);
+    t = time(NULL);
+    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+    printf("[%s] Manager shutdown complete.\n",cur_time_str);
     CLEAN_AND_EXIT( ,0);
 }
 
@@ -549,8 +558,9 @@ int handle_worker_term(struct worker_table_rec *worker) {
     // Must also update rec
     close(worker->pipes[0]);
     close(worker->pipes[1]);
-    if (pending_sync_wd == rec->watch_desc) {
-        pending_sync_wd = -1;
+    rec->error_count += file_num-success_num;
+    if (pending_sync_wd[EXISTS] && (pending_sync_wd[WD_VALUE] == rec->watch_desc)) {
+        pending_sync_wd[EXISTS] = 0;
         char sync = SYNC;
         write(fss_out_fd,&sync,sizeof(sync));
         printf("[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
@@ -609,9 +619,13 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 }
                 if (*cmd_code==CANCEL) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    char time_str[30];
+                    time_t t = time(NULL);
+                    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     if (rec==NULL) {
                         *cmd_code = NOT_ARCHIVED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                        printf("[%s] Directory not monitored: %s\n",time_str,real_source);
                         string_free(argv);
                         free(real_source);
                         return 0;
@@ -619,6 +633,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     if (rec->watch_desc==-1) {
                         *cmd_code = NOT_WATCHED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                        printf("[%s] Directory not monitored: %s\n",time_str,real_source);
                         string_free(argv);
                         free(real_source);
                         return 0;
@@ -626,9 +641,6 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     printf("%d\n",inotify_rm_watch(inotify_fd,rec->watch_desc));
                     sync_info_watchdesc_delete(sync_info_mem_store,rec->watch_desc);
                     rec->watch_desc=-1;
-                    char time_str[30];
-                    time_t t = time(NULL);
-                    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     printf("[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     fprintf(log_file,"[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     write(fss_out_fd,cmd_code,sizeof(*cmd_code));
@@ -638,8 +650,12 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 }
                 else if (*cmd_code==STATUS) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    time_t t = time(NULL);
+                    char cur_time_str[30];
+                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     if (rec==NULL) {
                         *cmd_code = NOT_ARCHIVED;
+                        printf("[%s] Directory not monitored: %s\n",cur_time_str,real_source);
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         free(real_source);
@@ -650,9 +666,6 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                         strcpy(time_str,"N/A");
                     else
                         strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
-                    time_t t = time(NULL);
-                    char cur_time_str[30];
-                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     printf("[%s] Status requested for %s\n",cur_time_str,string_ptr(rec->source_dir));
                     printf("Directory: %s\n",string_ptr(rec->source_dir));
                     printf("Target: %s\n",string_ptr(rec->target_dir));
@@ -667,13 +680,18 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 }
                 else if (*cmd_code==SYNC) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
-                    free(real_source);
+                    time_t t = time(NULL);
+                    char cur_time_str[30];
+                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     if (rec==NULL) {
                         *cmd_code = NOT_ARCHIVED;
+                        printf("[%s] Directory not archived: %s\n",cur_time_str,real_source);// new message
+                        free(real_source);
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         return 0;
                     }
+                    free(real_source);
                     if (rec->watch_desc==-1) {
                         rec->watch_desc = inotify_add_watch(inotify_fd,string_ptr(rec->source_dir),IN_CREATE | IN_DELETE | IN_MODIFY);
                         int insert_code;
@@ -682,10 +700,8 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                             return ALLOC_ERR;
                         }
                     }
-                    pending_sync_wd = rec->watch_desc;
-                    time_t t = time(NULL);
-                    char cur_time_str[30];
-                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    pending_sync_wd[EXISTS] = 1;
+                    pending_sync_wd[WD_VALUE] = rec->watch_desc;
                     if (rec->worker_num==0) {
                         struct work_rec work_rec;
                         work_rec.rec = rec;
