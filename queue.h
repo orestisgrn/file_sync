@@ -6,6 +6,7 @@ struct work_rec {
     struct sync_info_rec *rec;
     String filename;
     int op;
+    int from_queue;
 };
 
 Queue queue_create(void);

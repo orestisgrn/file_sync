@@ -51,6 +51,8 @@ int fss_out_fd=-1;
 
 int inotify_fd=-1;
 
+int pending_sync_wd = -1; 
+
 int read_config(FILE *config_file);
 int spawn_worker(struct work_rec *work_rec);
 int handle_worker_term(struct worker_table_rec *worker);
@@ -193,10 +195,10 @@ int main(int argc,char **argv) {
                                     string_free(cmd);},err_code);
                 }
                 string_free(cmd);
-                close(fss_out_fd);
-                if (cmd_code==SHUTDOWN) {
+                if (cmd_code!=SYNC)
+                    close(fss_out_fd);
+                if (cmd_code==SHUTDOWN)
                     break;
-                }
             }
             waiting_fds[FSS_IN_FD].revents=0;
         }
@@ -217,6 +219,7 @@ int main(int argc,char **argv) {
                 }
                 struct work_rec work_rec;
                 work_rec.rec = rec;
+                work_rec.from_queue = 0;
                 work_rec.filename = string_create(15);
                 if (work_rec.filename==NULL)
                     CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
@@ -348,6 +351,7 @@ int read_config(FILE *config_file) {
             return collect_code;
         int spawn_code;
         work_rec.op = FULL;
+        work_rec.from_queue = 0;
         if ((spawn_code=spawn_worker(&work_rec))!=0)
             return spawn_code;
         char time_str[30];
@@ -418,7 +422,9 @@ int cleanup_workers(void) {
     return 0;
 }
 
-int spawn_worker(struct work_rec *work_rec) {
+int spawn_worker(struct work_rec *work_rec) {       // WARNING: spawn_worker is called both before
+    if (!work_rec->from_queue)                      // and after a worker enters the queue
+        work_rec->rec->worker_num++;
     if (cur_workers==worker_limit) {
         if (!queue_push(worker_queue,work_rec->rec,work_rec->filename,work_rec->op)) {
             perror("Couldn't push worker to queue\n");
@@ -459,7 +465,8 @@ int spawn_worker(struct work_rec *work_rec) {
 
 int handle_worker_term(struct worker_table_rec *worker) {
     struct sync_info_rec *rec = worker->rec;
-    rec->last_sync_time = time(NULL);       // Only full sync for now
+    rec->worker_num--;
+    rec->last_sync_time = time(NULL);
     int op,file_num,success_num,buffer_count;
     read(worker->pipes[0],&op,sizeof(op));
     read(worker->pipes[0],&file_num,sizeof(file_num));             // -1 means error
@@ -542,6 +549,16 @@ int handle_worker_term(struct worker_table_rec *worker) {
     // Must also update rec
     close(worker->pipes[0]);
     close(worker->pipes[1]);
+    if (pending_sync_wd == rec->watch_desc) {
+        pending_sync_wd = -1;
+        char sync = SYNC;
+        write(fss_out_fd,&sync,sizeof(sync));
+        printf("[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
+                                                        string_ptr(rec->target_dir),file_num-success_num);
+        fprintf(log_file,"[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
+                                                        string_ptr(rec->target_dir),file_num-success_num);
+        close(fss_out_fd);
+    }
     return 0;
 }
 
@@ -642,6 +659,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     printf("Last Sync: %s\n",time_str);
                     printf("Errors: %d\n",rec->error_count);
                     printf("Status: %s\n",rec->watch_desc!=-1 ? "Active" : "Inactive");
+                    printf("Worker num: %d\n",rec->worker_num);//
                     write(fss_out_fd,cmd_code,sizeof(*cmd_code));       // Also send to console
                     argc++;
                     free(real_source);
@@ -649,16 +667,51 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 }
                 else if (*cmd_code==SYNC) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
+                    free(real_source);
                     if (rec==NULL) {
                         *cmd_code = NOT_ARCHIVED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
-                        free(real_source);
                         return 0;
                     }
-                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                    if (rec->watch_desc==-1) {
+                        rec->watch_desc = inotify_add_watch(inotify_fd,string_ptr(rec->source_dir),IN_CREATE | IN_DELETE | IN_MODIFY);
+                        int insert_code;
+                        if (sync_info_index_watchdesc(sync_info_mem_store,rec,&insert_code)==NULL) {
+                            string_free(argv);
+                            return ALLOC_ERR;
+                        }
+                    }
+                    pending_sync_wd = rec->watch_desc;
+                    time_t t = time(NULL);
+                    char cur_time_str[30];
+                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    if (rec->worker_num==0) {
+                        struct work_rec work_rec;
+                        work_rec.rec = rec;
+                        work_rec.filename = create_all_string();
+                        if (work_rec.filename==NULL) {
+                            string_free(argv);
+                            return ALLOC_ERR;
+                        }
+                        work_rec.op = FULL;
+                        work_rec.from_queue = 0;
+                        int spawn_code;
+                        if ((spawn_code=spawn_worker(&work_rec))!=0) {
+                            string_free(argv);
+                            return spawn_code;
+                        }
+                        printf("[%s] Syncing directory: %s -> %s\n",cur_time_str,string_ptr(rec->source_dir),
+                                                                                string_ptr(rec->target_dir));
+                        fprintf(log_file,"[%s] Syncing directory: %s -> %s\n",cur_time_str,
+                                                                        string_ptr(rec->source_dir),
+                                                                        string_ptr(rec->target_dir));
+                    }
+                    else {
+                        printf("[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
+                    }
+                    // Think about the case where another worker finishes first instead of the new full sync
                     argc++;
-                    free(real_source);
                     break;
                 }
                 else if (*cmd_code==ADD) {
@@ -721,6 +774,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     return collect_code;
                 int spawn_code;
                 work_rec.op = FULL;
+                work_rec.from_queue = 0;
                 if ((spawn_code=spawn_worker(&work_rec))!=0)
                     return spawn_code;
                 char time_str[30];

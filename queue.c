@@ -44,6 +44,7 @@ int queue_push(Queue q,struct sync_info_rec *rec,String filename,int op) {
     new_node->work_rec->rec = rec;
     new_node->work_rec->filename = filename;
     new_node->work_rec->op = op;
+    new_node->work_rec->from_queue = 1;
     return 1;
 }
 

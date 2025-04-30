@@ -43,6 +43,7 @@ struct sync_info_rec {
     time_t last_sync_time;
     int error_count;
     int watch_desc;
+    int worker_num;
 };
 
           // think about closing inotify_fd
