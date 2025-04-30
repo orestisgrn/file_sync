@@ -7,6 +7,8 @@
 #include "utils.h"
 #include "string.h"
 
+#define BUFFSIZE 30
+
 char *fss_in  = FSS_IN;
 char *fss_out = FSS_OUT;
 
@@ -65,8 +67,20 @@ int main(int argc, char **argv) {
         do {
             ch = getchar();
             if (ch==EOF) {
-                printf("EOF: terminating console...\n");
                 string_free(cmd);
+                close(fss_in_fd);
+                char buff[BUFFSIZE];
+                int chars_read;
+                if ((fss_out_fd=open(fss_out,O_RDONLY))==-1) {
+                    perror("fss_out couldn't open\n");
+                    close(fss_in_fd);
+                    fclose(log_file);
+                    return FIFO_ERR;
+                }
+                putchar('\n');
+                while((chars_read=read(fss_out_fd,buff,sizeof(buff)))!=0)
+                    fwrite(buff,sizeof(buff[0]),chars_read,stdout);
+                close(fss_out_fd);
                 close(fss_in_fd);
                 fclose(log_file);
                 return -2;
@@ -76,18 +90,19 @@ int main(int argc, char **argv) {
             if (string_push(cmd,ch)==-1) {
                 string_free(cmd);
                 perror("Memory allocation error");
+                close(fss_in_fd);
                 fclose(log_file);
                 return ALLOC_ERR;
             }
         } while (ch!='\n');
         if (wrote_char) {
             write(fss_in_fd,string_ptr(cmd),string_length(cmd));
+            char return_code;
             if ((fss_out_fd=open(fss_out,O_RDONLY))==-1) {
                 perror("fss_out couldn't open\n");
                 fclose(log_file);
                 return FIFO_ERR;
             }
-            char return_code;
             read(fss_out_fd,&return_code,sizeof(return_code));
             if (return_code==NO_COMMAND) {
                 printf("Invalid command: ");
@@ -101,10 +116,12 @@ int main(int argc, char **argv) {
                 putchar('\n');
             }
             else if (return_code==SHUTDOWN) {
-                printf("Shutting down...\n");
+                char buff[BUFFSIZE];
+                int chars_read;
+                while((chars_read=read(fss_out_fd,buff,sizeof(buff)))!=0)
+                    fwrite(buff,sizeof(buff[0]),chars_read,stdout);
+                close(fss_out_fd);
                 string_free(cmd);
-                fclose(log_file);
-                //close(fss_out_fd);
                 break;
             }
             else {                                  // Continue from here
@@ -125,10 +142,10 @@ int main(int argc, char **argv) {
                     printf("Source path is already archived.\n");
                 }
             }
-            close(fss_out_fd);
         }
         string_free(cmd);
     }
+    fclose(log_file);
     close(fss_in_fd);
     return 0;
 }

@@ -162,9 +162,9 @@ int main(int argc,char **argv) {
             if (read(fss_in_fd,&ch,sizeof(ch))==0) {        // Nothing to read --->  fifo closed
                 printf("Something happened\n");//
                 close(fss_in_fd);
-                fss_in_fd = open(fss_in,O_RDONLY | O_NONBLOCK);
-                if (fss_in_fd==-1) {
-                    CLEAN_AND_EXIT(perror("Fifo couldn't open\n"),FIFO_ERR);
+                fss_out_fd=open(fss_out,O_WRONLY);
+                if (fss_out_fd==-1) {
+                    CLEAN_AND_EXIT(perror("fss_out couldn't open\n"),FIFO_ERR);
                 }
                 break;//
             }
@@ -195,10 +195,10 @@ int main(int argc,char **argv) {
                                     string_free(cmd);},err_code);
                 }
                 string_free(cmd);
-                if (cmd_code!=SYNC)
-                    close(fss_out_fd);
                 if (cmd_code==SHUTDOWN)
                     break;
+                if (cmd_code!=SYNC)
+                    close(fss_out_fd);
             }
             waiting_fds[FSS_IN_FD].revents=0;
         }
@@ -246,8 +246,11 @@ int main(int argc,char **argv) {
     char cur_time_str[30];
     strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
     printf("[%s] Shutting down manager...\n",cur_time_str);
+    dprintf(fss_out_fd,"[%s] Shutting down manager...\n",cur_time_str);
     printf("[%s] Waiting for all active workers to finish.\n",cur_time_str);
+    dprintf(fss_out_fd,"[%s] Waiting for all active workers to finish.\n",cur_time_str);
     printf("[%s] Processing remaining queued tasks.\n",cur_time_str);
+    dprintf(fss_out_fd,"[%s] Processing remaining queued tasks.\n",cur_time_str);
     // Standard message, no matter if queued or active workers exist
     int cleanup_code;
     if ((cleanup_code=cleanup_workers())!=0)
@@ -255,6 +258,7 @@ int main(int argc,char **argv) {
     t = time(NULL);
     strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
     printf("[%s] Manager shutdown complete.\n",cur_time_str);
+    dprintf(fss_out_fd,"[%s] Manager shutdown complete.\n",cur_time_str);
     CLEAN_AND_EXIT( ,0);
 }
 
