@@ -34,7 +34,6 @@ enum cmd_codes {
     INVALID_TARGET,
     ARCHIVED,
     NOT_ARCHIVED,
-    NOT_WATCHED,
     NOT_MONITORED,
 };
 

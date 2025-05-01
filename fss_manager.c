@@ -611,6 +611,11 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     return 0;
                 }
                 if (*cmd_code==NO_COMMAND) {
+                    char time_str[30];
+                    time_t t = time(NULL);
+                    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    printf("[%s] Invalid command: %s\n",time_str,string_ptr(argv));
+                    dprintf(fss_out_fd,"[%s] Invalid command: %s\n",time_str,string_ptr(argv));
                     string_free(argv);
                     return 0;
                 }
@@ -765,9 +770,10 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                         time_t t = time(NULL);
                         char cur_time_str[30];
                         strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
-                        printf("[%s] Already in queue: %s\n",cur_time_str,real_source);
                         *cmd_code = ARCHIVED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                        dprintf(fss_out_fd,"[%s] Already in queue: %s\n",cur_time_str,real_source);
+                        printf("[%s] Already in queue: %s\n",cur_time_str,real_source);
                         free(real_source);
                         break;
                     }
@@ -776,9 +782,13 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
             else {
                 DIR *target_dir;
                 if ((target_dir=opendir(string_ptr(argv)))==NULL) {
-                    printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(argv));//?
                     *cmd_code = INVALID_TARGET;
                     write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                    time_t t = time(NULL);
+                    char cur_time_str[30];
+                    strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    printf("[%s] Invalid directory: %s\n",cur_time_str,string_ptr(argv));
+                    dprintf(fss_out_fd,"[%s] Invalid directory: %s\n",cur_time_str,string_ptr(argv));
                     string_free(argv);
                     free(real_source);
                     return 0;
@@ -824,11 +834,14 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 char time_str[30];
                 time_t t = time(NULL);
                 strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
-                printf("[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
-                printf("[%s] Monitoring started for %s\n",time_str,string_ptr(source));// target is not normalized
-                fprintf(log_file,"[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
-                fprintf(log_file,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
                 write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                dprintf(fss_out_fd,"[%s] Command add %s %s\n",time_str,string_ptr(source),string_ptr(argv));
+                dprintf(fss_out_fd,"[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
+                printf("[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
+                fprintf(log_file,"[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
+                dprintf(fss_out_fd,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
+                printf("[%s] Monitoring started for %s\n",time_str,string_ptr(source));// target is not normalized
+                fprintf(log_file,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
                 return 0;
             }
             string_free(argv);
@@ -842,12 +855,20 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
     }
     string_free(argv);
     if (argc==1) {
-        *cmd_code = INVALID_SOURCE;
+        *cmd_code = INVALID_SOURCE;             // Think about whether you want to print only in console
         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+        char time_str[30];
+        time_t t = time(NULL);
+        strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+        dprintf(fss_out_fd,"[%s] Source directory not given.\n",time_str);
     }
     if (argc==2 && *cmd_code==ADD) {
         *cmd_code = INVALID_TARGET;
         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+        char time_str[30];
+        time_t t = time(NULL);
+        strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+        dprintf(fss_out_fd,"[%s] Target directory not given.\n",time_str);
         free(real_source);
     }
     return 0;
@@ -874,9 +895,7 @@ int handle_cmd(String argv) {
     }
     else {
         ch = NO_COMMAND;
-        printf("%s\n",string_ptr(argv));
         write(fss_out_fd,&ch,sizeof(ch));
-        write(fss_out_fd,string_ptr(argv),string_length(argv)+1);
         return ch;
     }
 }

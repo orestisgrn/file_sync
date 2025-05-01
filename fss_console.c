@@ -104,15 +104,12 @@ int main(int argc, char **argv) {
             }
             read(fss_out_fd,&return_code,sizeof(return_code));
             if (return_code==NO_COMMAND) {
-                printf("Invalid command: ");
-                char ch;
-                while (1) {
-                    read(fss_out_fd,&ch,sizeof(ch));
-                    if (ch=='\0')
-                        break;
-                    putchar(ch);
+                char buff[30];
+                int chars_read;
+                while ((chars_read=read(fss_out_fd,buff,sizeof(buff)))>0) {
+                    fwrite(buff,sizeof(buff[0]),chars_read,stdout);
+                    fwrite(buff,sizeof(buff[0]),chars_read,log_file);
                 }
-                putchar('\n');
             }
             else if (return_code==SHUTDOWN) {
                 read_response();
@@ -123,20 +120,12 @@ int main(int argc, char **argv) {
             else {                                  // Continue from here
                 char ch;
                 read(fss_out_fd,&ch,sizeof(ch));
-                if (ch==INVALID_SOURCE || ch==NOT_MONITORED || ch==NOT_ARCHIVED) {
+                if (ch==INVALID_SOURCE || ch==NOT_MONITORED || 
+                    ch==NOT_ARCHIVED || ch==ARCHIVED || ch==INVALID_TARGET) {
                     char buff[30];
                     int chars_read;
                     while ((chars_read=read(fss_out_fd,buff,sizeof(buff)))>0)
                         fwrite(buff,sizeof(buff[0]),chars_read,stdout);
-                }
-                else if (ch==INVALID_TARGET) {
-                    printf("Target path doesn't exist.\n");
-                }
-                else if (ch==NOT_WATCHED) {
-                    printf("Source path is not watched.\n");
-                }
-                else if (ch==ARCHIVED) {
-                    printf("Source path is already archived.\n");
                 }
                 else {
                     read_response();
@@ -160,6 +149,8 @@ void read_response(void) {
     }
     char buff[30];
     int chars_read;
-    while ((chars_read=read(fss_out_fd,buff,sizeof(buff)))>0)
+    while ((chars_read=read(fss_out_fd,buff,sizeof(buff)))>0) {
         fwrite(buff,sizeof(buff[0]),chars_read,stdout);
+        fwrite(buff,sizeof(buff[0]),chars_read,log_file);
+    }
 }
