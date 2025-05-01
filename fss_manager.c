@@ -160,13 +160,16 @@ int main(int argc,char **argv) {
         if (waiting_fds[FSS_IN_FD].revents!=0) {
             char ch;
             if (read(fss_in_fd,&ch,sizeof(ch))==0) {        // Nothing to read --->  fifo closed
-                printf("Something happened\n");//
                 close(fss_in_fd);
                 fss_out_fd=open(fss_out,O_WRONLY);
                 if (fss_out_fd==-1) {
                     CLEAN_AND_EXIT(perror("fss_out couldn't open\n"),FIFO_ERR);
                 }
-                break;//
+                char time_str[30];
+                time_t t = time(NULL);
+                strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                dprintf(fss_out_fd,"[%s] Command shutdown\n",time_str);
+                break;
             }
             else {
                 String cmd = string_create(15);
@@ -565,8 +568,8 @@ int handle_worker_term(struct worker_table_rec *worker) {
     rec->error_count += file_num-success_num;
     if (pending_sync_wd[EXISTS] && (pending_sync_wd[WD_VALUE] == rec->watch_desc)) {
         pending_sync_wd[EXISTS] = 0;
-        char sync = SYNC;
-        write(fss_out_fd,&sync,sizeof(sync));
+        dprintf(fss_out_fd,"[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
+                                                        string_ptr(rec->target_dir),file_num-success_num);
         printf("[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
                                                         string_ptr(rec->target_dir),file_num-success_num);
         fprintf(log_file,"[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
@@ -599,7 +602,15 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
         if (string_length(argv)!=0) {
             if (argc==0) {
                 *cmd_code=handle_cmd(argv);
-                if (*cmd_code==SHUTDOWN || *cmd_code==NO_COMMAND) {
+                if (*cmd_code==SHUTDOWN) {
+                    char time_str[30];
+                    time_t t = time(NULL);
+                    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    dprintf(fss_out_fd,"[%s] Command shutdown\n",time_str);
+                    string_free(argv);
+                    return 0;
+                }
+                if (*cmd_code==NO_COMMAND) {
                     string_free(argv);
                     return 0;
                 }
@@ -609,9 +620,13 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
             else if (argc==1) {
                 DIR *source_dir;
                 if ((source_dir=opendir(string_ptr(argv)))==NULL) {
-                    printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(argv));//?
                     *cmd_code = INVALID_SOURCE;         // Think about only writing this to fss_out,
                     write(fss_out_fd,cmd_code,sizeof(*cmd_code));  // not return in *cmd_code
+                    char time_str[30];
+                    time_t t = time(NULL);
+                    strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
+                    printf("[%s] Invalid directory: %s\n",time_str,string_ptr(argv));
+                    dprintf(fss_out_fd,"[%s] Invalid directory: %s\n",time_str,string_ptr(argv));
                     string_free(argv);
                     return 0;
                 }
@@ -626,17 +641,10 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     char time_str[30];
                     time_t t = time(NULL);
                     strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
-                    if (rec==NULL) {
-                        *cmd_code = NOT_ARCHIVED;
+                    if (rec==NULL || rec->watch_desc==-1) {
+                        *cmd_code = NOT_MONITORED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
-                        printf("[%s] Directory not monitored: %s\n",time_str,real_source);
-                        string_free(argv);
-                        free(real_source);
-                        return 0;
-                    }
-                    if (rec->watch_desc==-1) {
-                        *cmd_code = NOT_WATCHED;
-                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                        dprintf(fss_out_fd,"[%s] Directory not monitored: %s\n",time_str,real_source);
                         printf("[%s] Directory not monitored: %s\n",time_str,real_source);
                         string_free(argv);
                         free(real_source);
@@ -645,9 +653,11 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     printf("%d\n",inotify_rm_watch(inotify_fd,rec->watch_desc));
                     sync_info_watchdesc_delete(sync_info_mem_store,rec->watch_desc);
                     rec->watch_desc=-1;
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));   // Think about using real path or not
+                    dprintf(fss_out_fd,"[%s] Command cancel %s\n",time_str,string_ptr(rec->source_dir));
                     printf("[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     fprintf(log_file,"[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
-                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                    dprintf(fss_out_fd,"[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     argc++;
                     free(real_source);
                     break;
@@ -658,9 +668,10 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     char cur_time_str[30];
                     strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     if (rec==NULL) {
-                        *cmd_code = NOT_ARCHIVED;
+                        *cmd_code = NOT_MONITORED;                  //  not archived would fit better,
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));// but, oh well.....
+                        dprintf(fss_out_fd,"[%s] Directory not monitored: %s\n",cur_time_str,real_source);
                         printf("[%s] Directory not monitored: %s\n",cur_time_str,real_source);
-                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         free(real_source);
                         return 0;
@@ -670,14 +681,20 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                         strcpy(time_str,"N/A");
                     else
                         strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&rec->last_sync_time));
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                    dprintf(fss_out_fd,"[%s] Command status %s\n",cur_time_str,string_ptr(rec->source_dir));
+                    dprintf(fss_out_fd,"[%s] Status requested for %s\n",cur_time_str,string_ptr(rec->source_dir));
                     printf("[%s] Status requested for %s\n",cur_time_str,string_ptr(rec->source_dir));
+                    dprintf(fss_out_fd,"Directory: %s\n",string_ptr(rec->source_dir));
                     printf("Directory: %s\n",string_ptr(rec->source_dir));
+                    dprintf(fss_out_fd,"Target: %s\n",string_ptr(rec->target_dir));
                     printf("Target: %s\n",string_ptr(rec->target_dir));
+                    dprintf(fss_out_fd,"Last Sync: %s\n",time_str);
                     printf("Last Sync: %s\n",time_str);
+                    dprintf(fss_out_fd,"Errors: %d\n",rec->error_count);
                     printf("Errors: %d\n",rec->error_count);
+                    dprintf(fss_out_fd,"Status: %s\n",rec->watch_desc!=-1 ? "Active" : "Inactive");
                     printf("Status: %s\n",rec->watch_desc!=-1 ? "Active" : "Inactive");
-                    printf("Worker num: %d\n",rec->worker_num);//
-                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));       // Also send to console
                     argc++;
                     free(real_source);
                     break;
@@ -689,9 +706,10 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
                     if (rec==NULL) {
                         *cmd_code = NOT_ARCHIVED;
+                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                        dprintf(fss_out_fd,"[%s] Directory not archived: %s\n",cur_time_str,real_source);
                         printf("[%s] Directory not archived: %s\n",cur_time_str,real_source);// new message
                         free(real_source);
-                        write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         string_free(argv);
                         return 0;
                     }
@@ -706,6 +724,8 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     }
                     pending_sync_wd[EXISTS] = 1;
                     pending_sync_wd[WD_VALUE] = rec->watch_desc;
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
+                    dprintf(fss_out_fd,"[%s] Command sync %s\n",cur_time_str,string_ptr(rec->source_dir));
                     if (rec->worker_num==0) {
                         struct work_rec work_rec;
                         work_rec.rec = rec;
@@ -721,6 +741,9 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                             string_free(argv);
                             return spawn_code;
                         }
+                        dprintf(fss_out_fd,"[%s] Syncing directory: %s -> %s\n",cur_time_str,
+                                                                        string_ptr(rec->source_dir),
+                                                                        string_ptr(rec->target_dir));
                         printf("[%s] Syncing directory: %s -> %s\n",cur_time_str,string_ptr(rec->source_dir),
                                                                                 string_ptr(rec->target_dir));
                         fprintf(log_file,"[%s] Syncing directory: %s -> %s\n",cur_time_str,
@@ -728,8 +751,9 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                                                                         string_ptr(rec->target_dir));
                     }
                     else {
+                        dprintf(fss_out_fd,"[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
                         printf("[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
-                    }
+                    }   // Think about how to handle sync already response
                     // Think about the case where another worker finishes first instead of the new full sync
                     argc++;
                     break;

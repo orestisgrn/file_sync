@@ -35,6 +35,7 @@ enum cmd_codes {
     ARCHIVED,
     NOT_ARCHIVED,
     NOT_WATCHED,
+    NOT_MONITORED,
 };
 
 struct sync_info_rec {

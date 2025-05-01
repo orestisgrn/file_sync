@@ -7,15 +7,18 @@
 #include "utils.h"
 #include "string.h"
 
-#define BUFFSIZE 30
-
 char *fss_in  = FSS_IN;
 char *fss_out = FSS_OUT;
+
+int fss_in_fd,fss_out_fd;
+
+FILE *log_file;
+
+void read_response(void);
 
 int main(int argc, char **argv) {
     char opt='\0';
     char *logname=NULL;
-    FILE *log_file=NULL;
     while (*(++argv) != NULL) {
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
@@ -48,7 +51,6 @@ int main(int argc, char **argv) {
         fclose(log_file);
         return ARGS_ERR;
     }
-    int fss_in_fd,fss_out_fd;
     if ((fss_in_fd=open(fss_in,O_WRONLY | O_NONBLOCK))==-1) {
         printf("The manager isn't running\n");
         fclose(log_file);
@@ -69,8 +71,6 @@ int main(int argc, char **argv) {
             if (ch==EOF) {
                 string_free(cmd);
                 close(fss_in_fd);
-                char buff[BUFFSIZE];
-                int chars_read;
                 if ((fss_out_fd=open(fss_out,O_RDONLY))==-1) {
                     perror("fss_out couldn't open\n");
                     close(fss_in_fd);
@@ -78,8 +78,7 @@ int main(int argc, char **argv) {
                     return FIFO_ERR;
                 }
                 putchar('\n');
-                while((chars_read=read(fss_out_fd,buff,sizeof(buff)))!=0)
-                    fwrite(buff,sizeof(buff[0]),chars_read,stdout);
+                read_response();
                 close(fss_out_fd);
                 close(fss_in_fd);
                 fclose(log_file);
@@ -116,30 +115,31 @@ int main(int argc, char **argv) {
                 putchar('\n');
             }
             else if (return_code==SHUTDOWN) {
-                char buff[BUFFSIZE];
-                int chars_read;
-                while((chars_read=read(fss_out_fd,buff,sizeof(buff)))!=0)
-                    fwrite(buff,sizeof(buff[0]),chars_read,stdout);
+                read_response();
                 close(fss_out_fd);
                 string_free(cmd);
                 break;
             }
             else {                                  // Continue from here
+                char ch;
                 read(fss_out_fd,&ch,sizeof(ch));
-                if (ch==INVALID_SOURCE) {
-                    printf("Source path doesn't exist.\n");
+                if (ch==INVALID_SOURCE || ch==NOT_MONITORED || ch==NOT_ARCHIVED) {
+                    char buff[30];
+                    int chars_read;
+                    while ((chars_read=read(fss_out_fd,buff,sizeof(buff)))>0)
+                        fwrite(buff,sizeof(buff[0]),chars_read,stdout);
                 }
                 else if (ch==INVALID_TARGET) {
                     printf("Target path doesn't exist.\n");
-                }
-                else if (ch==NOT_ARCHIVED) {
-                    printf("Source path is not archived.\n");
                 }
                 else if (ch==NOT_WATCHED) {
                     printf("Source path is not watched.\n");
                 }
                 else if (ch==ARCHIVED) {
                     printf("Source path is already archived.\n");
+                }
+                else {
+                    read_response();
                 }
             }
         }
@@ -148,4 +148,18 @@ int main(int argc, char **argv) {
     fclose(log_file);
     close(fss_in_fd);
     return 0;
+}
+
+void read_response(void) {
+    char ch;
+    while (1) {
+        read(fss_out_fd,&ch,sizeof(ch));
+        putc(ch,log_file);
+        if (ch=='\n')
+            break;
+    }
+    char buff[30];
+    int chars_read;
+    while ((chars_read=read(fss_out_fd,buff,sizeof(buff)))>0)
+        fwrite(buff,sizeof(buff[0]),chars_read,stdout);
 }
