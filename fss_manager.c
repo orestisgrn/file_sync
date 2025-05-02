@@ -147,7 +147,6 @@ int main(int argc,char **argv) {
     }
     enum { INOTIFY_FD, FSS_IN_FD, SIGNAL_FD };
     struct pollfd waiting_fds[] = { {inotify_fd,POLLIN,0}, {fss_in_fd,POLLIN,0}, {signal_fd,POLLIN,0} };
-    printf("Waiting for events here\n");//
     while (poll(waiting_fds,sizeof(waiting_fds)/sizeof(waiting_fds[0]),-1)!=-1) {
         if (waiting_fds[SIGNAL_FD].revents!=0) {
             int collect_code;
@@ -216,7 +215,6 @@ int main(int argc,char **argv) {
                 }
                 struct sync_info_rec *rec = sync_info_watchdesc_search(sync_info_mem_store,event->wd);
                 if (rec==NULL) {
-                    printf("Why are you here?\n");//
                     p += sizeof(struct inotify_event) + event->len;
                     continue;
                 }
@@ -230,12 +228,9 @@ int main(int argc,char **argv) {
                     string_free(work_rec.filename);
                     CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
                 }
-                printf("mask = ");//
-                if (event->mask & IN_CREATE) { printf("IN_CREATE "); work_rec.op = ADDED; }//
-                if (event->mask & IN_DELETE) { printf("IN_DELETE "); work_rec.op = DELETED; }//
-                if (event->mask & IN_MODIFY) { printf("IN_MODIFY "); work_rec.op = MODIFIED; }//
-                printf("%ld\n",time(NULL));//
-                printf("%s %s\n",string_ptr(rec->source_dir),event->name);//
+                if (event->mask & IN_CREATE) { work_rec.op = ADDED; }
+                if (event->mask & IN_DELETE) { work_rec.op = DELETED; }
+                if (event->mask & IN_MODIFY) { work_rec.op = MODIFIED; }
                 int spawn_code;
                 // Maybe update with collect_workers here
                 if ((spawn_code=spawn_worker(&work_rec))!=0)
@@ -314,7 +309,6 @@ int read_config(FILE *config_file) {
         }
         DIR *source_dir;
         if ((source_dir=opendir(string_ptr(source)))==NULL) {
-            printf("\nSource path %s doesn't exist. Omitted\n\n",string_ptr(source));//?
             string_free(source);
             string_free(target);
             continue;
@@ -329,11 +323,8 @@ int read_config(FILE *config_file) {
         if (string_cpy(source,real_source)==-1)
             return ALLOC_ERR;
         free(real_source);
-        //printf("%s\n",string_ptr(source));
-        //printf("%s\n",string_ptr(target));
         DIR *target_dir;
         if ((target_dir=opendir(string_ptr(target)))==NULL) {
-            printf("\nTarget path %s doesn't exist. Omitted\n\n",string_ptr(target));//?
             string_free(source);
             string_free(target);
             continue;
@@ -342,9 +333,7 @@ int read_config(FILE *config_file) {
         int insert_code;
         struct work_rec work_rec;
         work_rec.rec = sync_info_insert(sync_info_mem_store,source,target,&insert_code);
-        printf("%d\n",insert_code);
         if (insert_code==DUPL) {
-            printf("\nEntry %s detected twice. Duplicate entry omitted.\n\n",string_ptr(source));//
             string_free(source);
             string_free(target);
             continue;
@@ -355,7 +344,6 @@ int read_config(FILE *config_file) {
             return ALLOC_ERR;
         }
         int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
-        printf("%d\n",watch_desc);
         work_rec.rec->watch_desc = watch_desc;
         if (sync_info_index_watchdesc(sync_info_mem_store,work_rec.rec,&insert_code)==NULL)
             return ALLOC_ERR;
@@ -383,7 +371,6 @@ int read_config(FILE *config_file) {
 
 int collect_workers(void) {
     static struct signalfd_siginfo siginfo;
-    int count=0;//
     int status;
     pid_t pid;
     while ((pid=waitpid(-1,&status,WNOHANG))>0) {
@@ -406,9 +393,7 @@ int collect_workers(void) {
             }
             free(work_rec);
         }
-        count++;//
     }
-    printf("%d\n",count);//
     return 0;
 }
 
@@ -562,7 +547,6 @@ int handle_worker_term(struct worker_table_rec *worker) {
         string_free(filename);
     }
     // We don't check for error messages if op == FULL
-    // Must also update rec
     close(worker->pipes[0]);
     close(worker->pipes[1]);
     rec->error_count += file_num-success_num;
@@ -655,7 +639,6 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                         free(real_source);
                         return 0;
                     }
-                    printf("%d\n",inotify_rm_watch(inotify_fd,rec->watch_desc));
                     sync_info_watchdesc_delete(sync_info_mem_store,rec->watch_desc);
                     rec->watch_desc=-1;
                     write(fss_out_fd,cmd_code,sizeof(*cmd_code));   // Think about using real path or not
@@ -816,7 +799,6 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     return ALLOC_ERR;
                 }
                 int watch_desc=inotify_add_watch(inotify_fd,string_ptr(source),IN_CREATE | IN_DELETE | IN_MODIFY);
-                printf("%d\n",watch_desc);
                 work_rec.rec->watch_desc = watch_desc;
                 if (sync_info_index_watchdesc(sync_info_mem_store,work_rec.rec,&insert_code)==NULL)
                     return ALLOC_ERR;
