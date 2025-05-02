@@ -21,6 +21,8 @@
 #include "worker.h"
 #include "queue.h"
 
+/*    Some variables and definitions here...     */
+
 #define INOTIFY_BUF (sizeof(struct inotify_event)+NAME_MAX+1)
 
 int signal_fd = -1;
@@ -61,6 +63,8 @@ int process_command(String cmd,char *cmd_code);
 int collect_workers(void);
 int cleanup_workers(void);
 
+/*                                               */
+
 int main(int argc,char **argv) {
     FILE *config_file=NULL;
     unlink(fss_in);
@@ -72,7 +76,7 @@ int main(int argc,char **argv) {
     if (fss_in_fd==-1) {
         CLEAN_AND_EXIT(perror("Fifo couldn't open\n"),FIFO_ERR);
     }
-    sigemptyset(&sigchld);
+    sigemptyset(&sigchld);                      // We use signalfd to handle SIGCHLD
     sigaddset(&sigchld,SIGCHLD); 
     sigprocmask(SIG_SETMASK,&sigchld,NULL);
     if ((signal_fd=signalfd(-1,&sigchld,SFD_NONBLOCK))==-1) {
@@ -81,7 +85,7 @@ int main(int argc,char **argv) {
     char opt = '\0';
     char *logname = NULL;
     char *config = NULL;
-    while (*(++argv) != NULL) {
+    while (*(++argv) != NULL) {                 // Command line arguments handle
         if ((opt == 0) && ((*argv)[0] == '-')) {
             opt = (*argv)[1];
         }
@@ -99,7 +103,7 @@ int main(int argc,char **argv) {
                     worker_limit = strtol(*argv,&wrong_char,10);
                     if (*wrong_char!='\0') {
                         CLEAN_AND_EXIT(perror("Worker limit must be int\n"),ARGS_ERR);
-                    }   // Maybe change error text to usage
+                    }   // Maybe change error text to usage -*-
                     if (worker_limit < 1) {
                         CLEAN_AND_EXIT(perror("Worker limit must be a positive integer\n"),ARGS_ERR);
                     }
@@ -111,7 +115,7 @@ int main(int argc,char **argv) {
             }
             opt = 0;
         }
-    }
+    }/*   Open files, create data structures, and the such...   */
     if (logname==NULL) {
         CLEAN_AND_EXIT(perror("No logfile given\n"),ARGS_ERR);
     }
@@ -123,15 +127,17 @@ int main(int argc,char **argv) {
     }
     if ((inotify_fd = inotify_init()) == -1) {
         CLEAN_AND_EXIT(perror("Inotify initialization error\n"),INOTIFY_ERR);
-    }
+    }/*   sync_info_mem_store stores records of source-target directories, and can be used to search   */
+     /*   by source path name (absolute path, see realpath()) and watch descriptor if monitored.       */
     sync_info_mem_store = sync_info_lookup_create(200);
     if (sync_info_mem_store==NULL) {
         CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
-    }
+    }/*   worker_table stores info about active worker processes   */
     worker_table = calloc(worker_limit,sizeof(struct worker_table_rec*));
     if (worker_table==NULL) {
         CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
-    }
+    }/*   worker_queue stores records of processes (struct work_rec)   */
+     /*   to be executed when max worker limit is reached              */
     worker_queue = queue_create();
     if (worker_queue==NULL) {
         CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
@@ -140,25 +146,26 @@ int main(int argc,char **argv) {
         if ((config_file=fopen(config,"r"))==NULL) {
             CLEAN_AND_EXIT(perror("Config file couldn't open\n"),FOPEN_ERR);
         }
-        int code;
+        int code;/*   read_config reads config and also inserts its records on sync_info_mem_store   */
         if ((code=read_config(config_file))!=0) {
             CLEAN_AND_EXIT(perror("Error while reading config file\n"),code);
         }
     }
+    /*   Main loop of the program: wait for I/O on signal_fd, fss_in, and inotify_fd   */
     enum { INOTIFY_FD, FSS_IN_FD, SIGNAL_FD };
     struct pollfd waiting_fds[] = { {inotify_fd,POLLIN,0}, {fss_in_fd,POLLIN,0}, {signal_fd,POLLIN,0} };
     while (poll(waiting_fds,sizeof(waiting_fds)/sizeof(waiting_fds[0]),-1)!=-1) {
-        if (waiting_fds[SIGNAL_FD].revents!=0) {
+        if (waiting_fds[SIGNAL_FD].revents!=0) {    // signal_fd: collect terminated workers
             int collect_code;
             if ((collect_code=collect_workers())!=0) {
                 CLEAN_AND_EXIT(perror("Worker couldn't spawn\n"),collect_code);
             }
             waiting_fds[SIGNAL_FD].revents=0;
-            continue;
+            continue;       // Continue used to give priority to collecting terminated workers
         }
-        if (waiting_fds[FSS_IN_FD].revents!=0) {
+        if (waiting_fds[FSS_IN_FD].revents!=0) {    // fss_in_fd: read command from console
             char ch;
-            if (read(fss_in_fd,&ch,sizeof(ch))==0) {        // Nothing to read --->  fifo closed
+            if (read(fss_in_fd,&ch,sizeof(ch))==0) {    // Nothing to read -> fifo closed -> terminate
                 close(fss_in_fd);
                 fss_out_fd=open(fss_out,O_WRONLY);
                 if (fss_out_fd==-1) {
@@ -170,7 +177,7 @@ int main(int argc,char **argv) {
                 dprintf(fss_out_fd,"[%s] Command shutdown\n",time_str);
                 break;
             }
-            else {
+            else {                                      // Else: read command and process it
                 String cmd = string_create(15);
                 if (cmd==NULL) {
                     CLEAN_AND_EXIT(perror("Memory allocation error\n"),ALLOC_ERR);
@@ -204,12 +211,12 @@ int main(int argc,char **argv) {
             }
             waiting_fds[FSS_IN_FD].revents=0;
         }
-        if (waiting_fds[INOTIFY_FD].revents!=0) {
-            static char event_buf[INOTIFY_BUF];         // WARNING!!! : May read MORE than one event
+        if (waiting_fds[INOTIFY_FD].revents!=0) {   // inotify_fd: read the events
+            static char event_buf[INOTIFY_BUF];
             int num_read = read(inotify_fd,event_buf,INOTIFY_BUF);
             for (char *p=event_buf;p<event_buf+num_read; ) {    // WARNING!!! : += not used here
                 struct inotify_event *event = (struct inotify_event *) p;
-                if (event->mask & IN_ISDIR) {                   // IN_INGORE event when rm-ing a watch
+                if (event->mask & IN_ISDIR) {
                     p += sizeof(struct inotify_event) + event->len;
                     continue;
                 }
@@ -232,14 +239,16 @@ int main(int argc,char **argv) {
                 if (event->mask & IN_DELETE) { work_rec.op = DELETED; }
                 if (event->mask & IN_MODIFY) { work_rec.op = MODIFIED; }
                 int spawn_code;
-                // Maybe update with collect_workers here
+                // We could collect workers here before spawning, but it wont make a big difference
+                // as they will be collected by the signal_fd 
                 if ((spawn_code=spawn_worker(&work_rec))!=0)
                     CLEAN_AND_EXIT( ,spawn_code);
                 p += sizeof(struct inotify_event) + event->len;
             }
             waiting_fds[INOTIFY_FD].revents=0;
         }
-    }
+    }/*   After main loop, print and send termination messages,   */
+     /*   and collect workers without hanging (cleanup_workers)   */
     time_t t = time(NULL);
     char cur_time_str[30];
     strftime(cur_time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
@@ -318,7 +327,7 @@ int read_config(FILE *config_file) {
         string_free(source);
         if (real_source==NULL)
             return ALLOC_ERR;
-        if ((source=string_create(10))==NULL)   // Maybe put length to create arg
+        if ((source=string_create(10))==NULL)   // Maybe put length to create arg? (argument is number of chars to allocate)
             return ALLOC_ERR;
         if (string_cpy(source,real_source)==-1)
             return ALLOC_ERR;
@@ -355,7 +364,8 @@ int read_config(FILE *config_file) {
             return collect_code;
         int spawn_code;
         work_rec.op = FULL;
-        work_rec.from_queue = 0;
+        work_rec.from_queue = 0;    // Spawn worker doesn't use the record pointer given to store in queue.
+                                    // A new work_rec struct is made by the queue internally.
         if ((spawn_code=spawn_worker(&work_rec))!=0)
             return spawn_code;
         char time_str[30];
@@ -377,14 +387,14 @@ int collect_workers(void) {
         read(signal_fd,&siginfo,sizeof(siginfo));
         struct work_rec *work_rec;
         int i;
-        for (i=0;worker_table[i]->pid!=pid;i++);
+        for (i=0;worker_table[i]->pid!=pid;i++);     // worker_table is just an array
         if (handle_worker_term(worker_table[i])==-1)
             return ALLOC_ERR;
         cur_workers--;
         free(worker_table[i]);
         worker_table[i] = worker_table[cur_workers];
         worker_table[cur_workers] = NULL;
-        if ((work_rec=queue_pop(worker_queue))!=NULL) {
+        if ((work_rec=queue_pop(worker_queue))!=NULL) {     // Check if there are queued workers to fill in
             int spawn_code;
             if ((spawn_code=spawn_worker(work_rec))!=0) {
                 string_free(work_rec->filename);
@@ -397,7 +407,7 @@ int collect_workers(void) {
     return 0;
 }
 
-int cleanup_workers(void) {
+int cleanup_workers(void) {                         // Very similar to collect_workers()
     int status;
     pid_t pid;
     while((pid=wait(&status))!=-1) {
@@ -424,7 +434,7 @@ int cleanup_workers(void) {
 }
 
 int spawn_worker(struct work_rec *work_rec) {       // WARNING: spawn_worker is called both before
-    if (!work_rec->from_queue)                      // and after a worker enters the queue
+    if (!work_rec->from_queue)                      // and after a worker enters the queue (if it enters)
         work_rec->rec->worker_num++;
     if (cur_workers==worker_limit) {
         if (!queue_push(worker_queue,work_rec->rec,work_rec->filename,work_rec->op)) {
@@ -449,7 +459,7 @@ int spawn_worker(struct work_rec *work_rec) {       // WARNING: spawn_worker is 
             return FORK_ERR;
         }
         else if (pid==0) {
-            dup2(worker_table[cur_workers-1]->pipes[0],STDIN_FILENO);//
+            dup2(worker_table[cur_workers-1]->pipes[0],STDIN_FILENO); // Do we really need this one?
             dup2(worker_table[cur_workers-1]->pipes[1],STDOUT_FILENO);
             char op_str[2] = { work_rec->op+'0','\0' };
             execl("./worker","worker",string_ptr(work_rec->rec->source_dir),
@@ -469,8 +479,9 @@ int handle_worker_term(struct worker_table_rec *worker) {
     rec->worker_num--;
     rec->last_sync_time = time(NULL);
     int op,file_num,success_num,buffer_count;
+    /*   Response from worker is 4 ints: op, file_num, success_num, and buffer_count (number of errno strings)*/                   
     read(worker->pipes[0],&op,sizeof(op));
-    read(worker->pipes[0],&file_num,sizeof(file_num));             // -1 means error
+    read(worker->pipes[0],&file_num,sizeof(file_num));             // -1 on file_num means error
     read(worker->pipes[0],&success_num,sizeof(success_num));
     read(worker->pipes[0],&buffer_count,sizeof(buffer_count));
     char time_str[30];
@@ -490,7 +501,7 @@ int handle_worker_term(struct worker_table_rec *worker) {
     }
     else if (success_num==0) {
         result="ERROR";
-        if (op==FULL) {
+        if (op==FULL) {     // If op==FULL, ignore errno messages from buffer
             copy_msg="[%d skipped]\n";
         }
         else {
@@ -498,7 +509,7 @@ int handle_worker_term(struct worker_table_rec *worker) {
             if ((error_str=string_create(10))==NULL)
                 return -1;
             char ch;
-            while (1) {
+            while (1) {     // Else, read and store the error message
                 read(worker->pipes[0],&ch,sizeof(ch));
                 if (ch=='\n')
                     break;
@@ -511,17 +522,20 @@ int handle_worker_term(struct worker_table_rec *worker) {
         }
     }
     else {
-        result="PARTIAL";
+        result="PARTIAL";   // PARTIAL means FULL op, so also ignore buffer.
         copy_msg="[%d files copied, %d skipped]\n";
         two_args=1;
     }
     fprintf(log_file,"[%s] ",result);
+    /*   If op==FULL, just print the copy message.   */
     if (op==FULL) {
-        if (two_args)
+        if (two_args)   // two_args is to check if copy_msg (either which file was processed or how many were copied)
+                        // has one or two arguments (depends on whether we have SUCCESS, ERROR, or PARTIAL)
             fprintf(log_file,copy_msg,success_num,file_num-success_num);
         else
             fprintf(log_file,copy_msg,file_num);
     }
+    /*   Else: read the file name which was also sent, and potentially the error message.   */
     else {
         String filename=string_create(10);
         if (filename==NULL) {
@@ -546,10 +560,10 @@ int handle_worker_term(struct worker_table_rec *worker) {
         string_free(error_str);
         string_free(filename);
     }
-    // We don't check for error messages if op == FULL
     close(worker->pipes[0]);
     close(worker->pipes[1]);
     rec->error_count += file_num-success_num;
+    /*   Check if there is a pending sync command for this directory, to send response to console   */
     if (pending_sync_wd[EXISTS] && (pending_sync_wd[WD_VALUE] == rec->watch_desc)) {
         pending_sync_wd[EXISTS] = 0;
         dprintf(fss_out_fd,"[%s] Sync completed %s -> %s Errors:%d\n",time_str,string_ptr(rec->source_dir),
@@ -575,15 +589,16 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
     if (argv==NULL) {
         return ALLOC_ERR;
     }
+    /*   Main loop: iterate the command character by character, while skipping spaces   */
     while (1) {
-        while (!isspace(*cmd_ptr)) {
+        while (!isspace(*cmd_ptr)) {    // arguments are fetched here
             if (string_push(argv,*cmd_ptr)==-1) {
                 string_free(argv);
                 return ALLOC_ERR;
             }
             cmd_ptr++;
         }
-        if (string_length(argv)!=0) {
+        if (string_length(argv)!=0) {   // If argument is found, act depending on the arg num (argc)
             if (argc==0) {
                 *cmd_code=handle_cmd(argv);
                 if (*cmd_code==SHUTDOWN) {
@@ -607,10 +622,10 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 argc++;
             }
             else if (argc==1) {
-                DIR *source_dir;
+                DIR *source_dir;        // Validate arg is a dir
                 if ((source_dir=opendir(string_ptr(argv)))==NULL) {
-                    *cmd_code = INVALID_SOURCE;         // Think about only writing this to fss_out,
-                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));  // not return in *cmd_code
+                    *cmd_code = INVALID_SOURCE;
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                     char time_str[30];
                     time_t t = time(NULL);
                     strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
@@ -625,12 +640,13 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     string_free(argv);
                     return ALLOC_ERR;
                 }
+                /*   Do depending on the command previously fetched   */
                 if (*cmd_code==CANCEL) {
                     rec = sync_info_path_search(sync_info_mem_store,real_source);
                     char time_str[30];
                     time_t t = time(NULL);
                     strftime(time_str,30,"%Y-%m-%d %H:%M:%S",localtime(&t));
-                    if (rec==NULL || rec->watch_desc==-1) {
+                    if (rec==NULL || rec->watch_desc==-1) {     // rec->watch_desc==-1 -> not monitored
                         *cmd_code = NOT_MONITORED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         dprintf(fss_out_fd,"[%s] Directory not monitored: %s\n",time_str,real_source);
@@ -741,8 +757,8 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     else {
                         dprintf(fss_out_fd,"[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
                         printf("[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
-                    }   // Think about how to handle sync already response
-                    // Think about the case where another worker finishes first instead of the new full sync
+                    }
+                    // Think about the case where another worker finishes first instead of the new full sync -*-
                     argc++;
                     break;
                 }
@@ -762,7 +778,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     }
                 }
             }
-            else {
+            else if (argc==2) {          // argc==2 -> add command, target argument -*-
                 DIR *target_dir;
                 if ((target_dir=opendir(string_ptr(argv)))==NULL) {
                     *cmd_code = INVALID_TARGET;

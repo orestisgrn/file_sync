@@ -4,6 +4,8 @@
 #define FSS_IN  "fss_in"
 #define FSS_OUT "fss_out"
 
+// Χρήσιμα enums, macros, και ορισμοί που χρησιμοποιούνται σε πολλαπλά αρχεία
+
 enum return_codes {
     ARGS_ERR=1,
     INOTIFY_ERR,
@@ -45,8 +47,6 @@ struct sync_info_rec {
     int watch_desc;
     int worker_num;
 };
-
-          // think about closing inotify_fd
 
 #define CLEAN_AND_EXIT(PRINT_CMD,RETURN_CODE) { \
     sync_info_lookup_free(sync_info_mem_store); \

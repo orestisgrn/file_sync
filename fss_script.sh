@@ -51,7 +51,7 @@ if [ "$command_name" = "listAll" ]; then
         while IFS= read -r line; do # match five brackets
             echo "$line" | grep -P "^\[[^\]]+\] \[[^\]]+\] \[[^\]]+\] \[[^\]]+\] \[[^\]]+\]$" > /dev/null
             if [ $? -eq 0 ]; then
-                source=$(echo "$line" | awk -F'[\\[\\]]' '{print $4}')
+                source=$(echo "$line" | awk -F'[\\[\\]]' '{print $4}')  # get second argument (source_dir)
                 IFS= read -r success_code
                 sync_info_arr["$source"]="${line} ${success_code}"
             fi
@@ -66,7 +66,7 @@ if [ "$command_name" = "listAll" ]; then
 elif [ "$command_name" = "listMonitored" ]; then
     declare -A stopped
     if [ -f "$path_name" ]; then
-        while IFS= read -r line; do # match five brackets
+        while IFS= read -r line; do
             echo "$line" | grep -P "^\[[^\]]+\] \[[^\]]+\] \[[^\]]+\] \[[^\]]+\] \[[^\]]+\]$" > /dev/null
             if [ $? -eq 0 ]; then
                 source=$(echo "$line" | awk -F'[\\[\\]]' '{print $4}')
@@ -97,7 +97,7 @@ elif [ "$command_name" = "listMonitored" ]; then
 elif [ "$command_name" = "listStopped" ]; then      # same as listMonitored, but prints only stopped
     declare -A stopped
     if [ -f "$path_name" ]; then
-        while IFS= read -r line; do # match five brackets
+        while IFS= read -r line; do
             echo "$line" | grep -P "^\[[^\]]+\] \[[^\]]+\] \[[^\]]+\] \[[^\]]+\] \[[^\]]+\]$" > /dev/null
             if [ $? -eq 0 ]; then
                 source=$(echo "$line" | awk -F'[\\[\\]]' '{print $4}')

@@ -56,7 +56,8 @@ int main(int argc, char **argv) {
         fclose(log_file);
         return -1;
     }
-    while(1) {      // Main console loop            // Idea:redirect STDIN to fss_in (think a bit, huh?)
+    /*   Main console loop   */
+    while(1) {
         int ch;
         String cmd = string_create(15);
         if (cmd==NULL) {
@@ -102,6 +103,7 @@ int main(int argc, char **argv) {
                 fclose(log_file);
                 return FIFO_ERR;
             }
+            /*   fss_manager sends a return code to show what command was inserted or if the command is invalid   */
             read(fss_out_fd,&return_code,sizeof(return_code));
             if (return_code==NO_COMMAND) {
                 char buff[30];
@@ -111,13 +113,15 @@ int main(int argc, char **argv) {
                     fwrite(buff,sizeof(buff[0]),chars_read,log_file);
                 }
             }
+            /*   Then it sends the response (if the command was valid, we use read_response)   */
             else if (return_code==SHUTDOWN) {
                 read_response();
                 close(fss_out_fd);
                 string_free(cmd);
                 break;
             }
-            else {                                  // Continue from here
+            else {
+                /*   For commands with argument, we wait for another char code   */
                 char ch;
                 read(fss_out_fd,&ch,sizeof(ch));
                 if (ch==INVALID_SOURCE || ch==NOT_MONITORED || 
@@ -139,6 +143,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+/*   read_response first writes the command message from fss_manager to the log, then reads the rest of the response   */
 void read_response(void) {
     char ch;
     while (1) {

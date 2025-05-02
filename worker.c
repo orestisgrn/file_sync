@@ -12,7 +12,7 @@
 #define BUFFSIZE 100
 
 int full_sync(char *source,char *target);
-int add_file(char *source,char *target,char *file);        // warning: write report doesn't write the file name in the end
+int add_file(char *source,char *target,char *file); // WARNING: write report doesn't write the file name in the end
 int modify_file(char *source,char *target,char *file);
 int deleted_file(char *source,char *target,char *file);
 
@@ -21,7 +21,7 @@ void write_report(int op, char **err, int buffer_count, int file_num, int succes
 void store_to_buffer(int err,char ***buffer, int *buffer_count, int *buffer_size);
 int copy_file(String input, String output);
 
-int main(int argc,char **argv) {            // maybe change return values
+int main(int argc,char **argv) {
     if (!strcmp(argv[3],"ALL")) {
         return full_sync(argv[1],argv[2]);
     }
@@ -45,7 +45,7 @@ int full_sync(char *source,char *target) {
     int success_num=0;
     if (buffer==NULL) {
         char *err = strerror(errno);
-        write_report(FULL,&err,1,-1,0);         // -1 on file_num means error (to not think zero files, zero copy)
+        write_report(FULL,&err,1,-1,0); // -1 on file_num means error (to not think zero files, zero copy)
         return -1;
     }
     if ((dir_ptr=opendir(source))==NULL) {
@@ -190,8 +190,8 @@ String build_path(char *source,char *target) {
 
 int copy_file(String input, String output) {        // Edge case: files with the name in target dir
     int infile,outfile;                             // already exist, but have no writing rights.
-    int error;
-    ssize_t nread ;
+    int error;                                      // Looking back at this later on:
+    ssize_t nread ;                                 // "Why did I write this?"
     char buffer[BUFFSIZE];
     if ((infile=open(string_ptr(input),O_RDONLY))==-1) {
         return errno;
