@@ -126,7 +126,17 @@ elif [ "$command_name" = "listStopped" ]; then      # same as listMonitored, but
         fi
     done
 elif [ "$command_name" = "purge" ]; then
-    echo "purge"
+    if [ -f "$path_name" ]; then
+        echo "Deleting $path_name..."
+        rm "$path_name"
+    elif [ -d "$path_name" ]; then
+        echo "Deleting $path_name..."
+        rm -r "$path_name"
+    else
+        echo "Invalid path: $path_name"
+        exit 1
+    fi
+    echo Purge complete.
 else
     echo "Invalid command: $command_name"
 fi
