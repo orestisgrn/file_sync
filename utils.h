@@ -4,8 +4,6 @@
 #define FSS_IN  "fss_in"
 #define FSS_OUT "fss_out"
 
-// Χρήσιμα enums, macros, και ορισμοί που χρησιμοποιούνται σε πολλαπλά αρχεία
-
 enum return_codes {
     ARGS_ERR=1,
     INOTIFY_ERR,

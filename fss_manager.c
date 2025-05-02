@@ -103,7 +103,7 @@ int main(int argc,char **argv) {
                     worker_limit = strtol(*argv,&wrong_char,10);
                     if (*wrong_char!='\0') {
                         CLEAN_AND_EXIT(perror("Worker limit must be int\n"),ARGS_ERR);
-                    }   // Maybe change error text to usage -*-
+                    }
                     if (worker_limit < 1) {
                         CLEAN_AND_EXIT(perror("Worker limit must be a positive integer\n"),ARGS_ERR);
                     }
@@ -407,7 +407,7 @@ int collect_workers(void) {
     return 0;
 }
 
-int cleanup_workers(void) {                         // Very similar to collect_workers()
+int cleanup_workers(void) {                         // Very similar to collect_workers(), but we block wait
     int status;
     pid_t pid;
     while((pid=wait(&status))!=-1) {
@@ -657,7 +657,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     }
                     sync_info_watchdesc_delete(sync_info_mem_store,rec->watch_desc);
                     rec->watch_desc=-1;
-                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));   // Think about using real path or not
+                    write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                     dprintf(fss_out_fd,"[%s] Command cancel %s\n",time_str,string_ptr(rec->source_dir));
                     printf("[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
                     fprintf(log_file,"[%s] Monitoring stopped for %s\n",time_str,string_ptr(rec->source_dir));
@@ -712,7 +712,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                         *cmd_code = NOT_ARCHIVED;
                         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
                         dprintf(fss_out_fd,"[%s] Directory not archived: %s\n",cur_time_str,real_source);
-                        printf("[%s] Directory not archived: %s\n",cur_time_str,real_source);// new message
+                        printf("[%s] Directory not archived: %s\n",cur_time_str,real_source);
                         free(real_source);
                         string_free(argv);
                         return 0;
@@ -758,7 +758,6 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                         dprintf(fss_out_fd,"[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
                         printf("[%s] Sync already in progress %s\n",cur_time_str,string_ptr(rec->source_dir));
                     }
-                    // Think about the case where another worker finishes first instead of the new full sync -*-
                     argc++;
                     break;
                 }
@@ -778,7 +777,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                     }
                 }
             }
-            else if (argc==2) {          // argc==2 -> add command, target argument -*-
+            else if (argc==2) {          // argc==2 -> add command, target argument
                 DIR *target_dir;
                 if ((target_dir=opendir(string_ptr(argv)))==NULL) {
                     *cmd_code = INVALID_TARGET;
@@ -838,7 +837,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
                 printf("[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
                 fprintf(log_file,"[%s] Added directory: %s -> %s\n",time_str,string_ptr(source),string_ptr(argv));
                 dprintf(fss_out_fd,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
-                printf("[%s] Monitoring started for %s\n",time_str,string_ptr(source));// target is not normalized
+                printf("[%s] Monitoring started for %s\n",time_str,string_ptr(source));
                 fprintf(log_file,"[%s] Monitoring started for %s\n",time_str,string_ptr(source));
                 return 0;
             }
@@ -853,7 +852,7 @@ int process_command(String cmd,char *cmd_code) {           // Command ends in \n
     }
     string_free(argv);
     if (argc==1) {
-        *cmd_code = INVALID_SOURCE;             // Think about whether you want to print only in console
+        *cmd_code = INVALID_SOURCE;
         write(fss_out_fd,cmd_code,sizeof(*cmd_code));
         char time_str[30];
         time_t t = time(NULL);
