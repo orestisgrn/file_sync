@@ -128,5 +128,5 @@ elif [ "$command_name" = "listStopped" ]; then      # same as listMonitored, but
 elif [ "$command_name" = "purge" ]; then
     echo "purge"
 else
-    echo "Invalid file: $path_name"
+    echo "Invalid command: $command_name"
 fi
