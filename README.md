@@ -51,4 +51,4 @@ Process executed after forking by fss_manager. Not to be executed on demand.
 
 ## More documentation and implementation details
 
-More details about the program and its implementation can be found in the docs directory, where the original assignment description along with my implementation's details can be found.
+More details about the program and its implementation can be found in the docs directory, where the original assignment description along with my implementation's details reside (only in greek for now).
